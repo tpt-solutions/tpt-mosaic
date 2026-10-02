@@ -1069,7 +1069,7 @@ dependencies = [
 [[package]]
 name = "tpt-archon-bridge"
 version = "0.1.0"
-source = "git+https://github.com/tpt-solutions/tpt-archon?rev=5accc4cad30d713324b0534fb324c0fc6185492f#5accc4cad30d713324b0534fb324c0fc6185492f"
+source = "git+https://github.com/tpt-solutions/tpt-archon?rev=928c00dec13560844a52222e3d02107516a7c09d#928c00dec13560844a52222e3d02107516a7c09d"
 dependencies = [
  "tpt-archon-core",
 ]
@@ -1077,12 +1077,12 @@ dependencies = [
 [[package]]
 name = "tpt-archon-core"
 version = "0.1.0"
-source = "git+https://github.com/tpt-solutions/tpt-archon?rev=5accc4cad30d713324b0534fb324c0fc6185492f#5accc4cad30d713324b0534fb324c0fc6185492f"
+source = "git+https://github.com/tpt-solutions/tpt-archon?rev=928c00dec13560844a52222e3d02107516a7c09d#928c00dec13560844a52222e3d02107516a7c09d"
 
 [[package]]
 name = "tpt-archon-kernel"
 version = "0.1.0"
-source = "git+https://github.com/tpt-solutions/tpt-archon?rev=5accc4cad30d713324b0534fb324c0fc6185492f#5accc4cad30d713324b0534fb324c0fc6185492f"
+source = "git+https://github.com/tpt-solutions/tpt-archon?rev=928c00dec13560844a52222e3d02107516a7c09d#928c00dec13560844a52222e3d02107516a7c09d"
 dependencies = [
  "tpt-archon-bridge",
  "tpt-archon-core",
@@ -1091,7 +1091,7 @@ dependencies = [
 [[package]]
 name = "tpt-crucible-catalyst"
 version = "0.1.0"
-source = "git+https://github.com/tpt-solutions/tpt-crucible?rev=bca2a9ff7b94eeb95d65c4e1652909930f42841b#bca2a9ff7b94eeb95d65c4e1652909930f42841b"
+source = "git+https://github.com/tpt-solutions/tpt-crucible?rev=0ef1dca7c0f1682becef1d024097ce02d8589b36#0ef1dca7c0f1682becef1d024097ce02d8589b36"
 dependencies = [
  "serde",
  "serde_json",
@@ -1101,7 +1101,7 @@ dependencies = [
 [[package]]
 name = "tpt-crucible-common"
 version = "0.1.0"
-source = "git+https://github.com/tpt-solutions/tpt-crucible?rev=bca2a9ff7b94eeb95d65c4e1652909930f42841b#bca2a9ff7b94eeb95d65c4e1652909930f42841b"
+source = "git+https://github.com/tpt-solutions/tpt-crucible?rev=0ef1dca7c0f1682becef1d024097ce02d8589b36#0ef1dca7c0f1682becef1d024097ce02d8589b36"
 dependencies = [
  "bincode",
  "serde",

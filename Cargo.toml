@@ -37,15 +37,13 @@ tpt-mosaic-verify    = { path = "crates/tpt-mosaic-verify" }
 tpt-mosaic-economy   = { path = "crates/tpt-mosaic-economy" }
 
 # External tpt-solutions ecosystem crates (sub-crates of the four GitHub workspaces).
-# Pinned to verified revisions; bump deliberately. The crucible and archon
-# pins track the fix branches (fix/crucible-common-compile, fix/template-manifest-noise)
-# — re-pin to master once those PRs merge.
+# Pinned to verified revisions; bump deliberately.
 tpt-gpu-runtime       = { git = "https://github.com/tpt-solutions/tpt-gpu",      rev = "e346589a5ee4591486693ee520d7cdf3db7440aa" }
-tpt-crucible-common   = { git = "https://github.com/tpt-solutions/tpt-crucible", rev = "bca2a9ff7b94eeb95d65c4e1652909930f42841b" }
-tpt-crucible-catalyst = { git = "https://github.com/tpt-solutions/tpt-crucible", rev = "bca2a9ff7b94eeb95d65c4e1652909930f42841b" }
-tpt-archon-kernel     = { git = "https://github.com/tpt-solutions/tpt-archon",   rev = "5accc4cad30d713324b0534fb324c0fc6185492f" }
-tpt-archon-bridge     = { git = "https://github.com/tpt-solutions/tpt-archon",   rev = "5accc4cad30d713324b0534fb324c0fc6185492f" }
-tpt-archon-core       = { git = "https://github.com/tpt-solutions/tpt-archon",   rev = "5accc4cad30d713324b0534fb324c0fc6185492f" }
+tpt-crucible-common   = { git = "https://github.com/tpt-solutions/tpt-crucible", rev = "0ef1dca7c0f1682becef1d024097ce02d8589b36" }
+tpt-crucible-catalyst = { git = "https://github.com/tpt-solutions/tpt-crucible", rev = "0ef1dca7c0f1682becef1d024097ce02d8589b36" }
+tpt-archon-kernel     = { git = "https://github.com/tpt-solutions/tpt-archon",   rev = "928c00dec13560844a52222e3d02107516a7c09d" }
+tpt-archon-bridge     = { git = "https://github.com/tpt-solutions/tpt-archon",   rev = "928c00dec13560844a52222e3d02107516a7c09d" }
+tpt-archon-core       = { git = "https://github.com/tpt-solutions/tpt-archon",   rev = "928c00dec13560844a52222e3d02107516a7c09d" }
 tpt-eve-symbolic      = { git = "https://github.com/tpt-solutions/tpt-eve",      rev = "c230d0e83633bd0a7f8d3e6a5d830f48236427ad" }
 tpt-eve-core          = { git = "https://github.com/tpt-solutions/tpt-eve",      rev = "c230d0e83633bd0a7f8d3e6a5d830f48236427ad" }
 
