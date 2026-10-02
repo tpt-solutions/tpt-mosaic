@@ -2,6 +2,8 @@
 
 > **Decentralized ambient compute fabric** — unifying idle edge devices and datacenter infrastructure into a single, self-verifying peer-to-peer supercomputer.
 
+[![CI](https://github.com/tpt-solutions/tpt-mosaic/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/tpt-solutions/tpt-mosaic/actions/workflows/ci.yml)
+
 *By TPT Solutions · Licensed under [MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE)*
 
 ---
