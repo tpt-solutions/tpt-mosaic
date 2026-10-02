@@ -89,11 +89,12 @@ With a `[mesh]` section in `node.toml`, nodes find each other and run
 multi-node quorums over loopback/LAN TCP (MOSA v2 frames):
 
 - **Discovery**: on every heartbeat, a node trades beacons with its configured
-  `seeds` and all known peers. Each beacon carries the sender's identity,
-  hardware profile, capabilities, and mesh address; the reply is a **gossip
-  snapshot** of the responder's peer table — so listing a single well-connected
-  seed propagates the whole view, and workers discover each other without
-  listing one another.
+  `seeds`, any mDNS-discovered LAN peers (`mdns = true` under `[mesh]`), and
+  all known peers. Each beacon carries the sender's identity, hardware
+  profile, capabilities, and mesh address; the reply is a **gossip snapshot**
+  of the responder's peer table — so listing a single well-connected seed
+  propagates the whole view, and a pure mDNS deployment needs no seeds at
+  all (bind the mesh to `0.0.0.0` so peers can reach your LAN address).
 - **Dispatch**: the coordinator assembles a heterogeneous quorum from its live
   peer table (`tpt-mosaic-scheduler`), sends `TaskAssignment` frames, and each
   worker executes in its sandboxed backend and replies with a `ResultHash`.

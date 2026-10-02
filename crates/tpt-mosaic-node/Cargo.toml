@@ -26,7 +26,7 @@ real-backends = [
 [dependencies]
 tpt-mosaic-core      = { workspace = true, features = ["std"] }
 tpt-mosaic-proto     = { workspace = true, features = ["std"] }
-tpt-mosaic-discovery = { workspace = true }
+tpt-mosaic-discovery = { workspace = true, features = ["mdns"] }
 tpt-mosaic-scheduler = { workspace = true }
 tpt-mosaic-task      = { workspace = true }
 tpt-mosaic-compiler  = { workspace = true }

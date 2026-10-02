@@ -18,7 +18,9 @@ use tokio::time::interval;
 
 use tpt_mosaic_compiler as compiler;
 use tpt_mosaic_core::{CapabilityFlags, MosaicError, NodeId, NodeKind, QuorumConfig, TaskId};
-use tpt_mosaic_discovery::{BeaconBroadcaster, FrameHandler, PeerRecord, PeerTable, TcpMesh};
+use tpt_mosaic_discovery::{
+    mdns::MdnsHandle, BeaconBroadcaster, FrameHandler, PeerRecord, PeerTable, TcpMesh,
+};
 use tpt_mosaic_economy::chains::{BaseSettlement, NearSettlement, SolanaSettlement};
 use tpt_mosaic_economy::{calculate_reward, Chain, ReputationStore, Settlement};
 use tpt_mosaic_proto::codec::MAX_GOSSIP_PEERS;
@@ -118,6 +120,8 @@ pub struct NodeDaemon {
     jit: Option<compiler::JitCache>,
     /// Checkpoint directory, when `[task] checkpoint_dir` is configured.
     checkpoints: Option<std::path::PathBuf>,
+    /// LAN mDNS advertiser/browser, when `[mesh] mdns` is enabled.
+    mdns: Option<MdnsHandle>,
     broadcaster: TracingBroadcaster,
     sandbox: Sandbox,
     reputation: Arc<Mutex<ReputationStore>>,
@@ -178,6 +182,19 @@ impl NodeDaemon {
             None => (None, None),
         };
         let (mesh_listener, mesh_addr) = mesh_listener;
+        let mdns = match (mesh_addr, config.mesh.mdns) {
+            (Some(addr), true) => match MdnsHandle::spawn(self_id, addr.port()) {
+                Ok(handle) => {
+                    tracing::info!("mDNS discovery active");
+                    Some(handle)
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "mDNS start failed; using static seeds only");
+                    None
+                }
+            },
+            _ => None,
+        };
         let settlement = make_settlement(config.chain, config.rpc_url.as_deref());
         Self {
             config,
@@ -187,6 +204,7 @@ impl NodeDaemon {
             mesh_addr,
             jit,
             checkpoints,
+            mdns,
             broadcaster: TracingBroadcaster,
             sandbox: Sandbox::new(ThermalPolicy::default()),
             reputation: Arc::new(Mutex::new(ReputationStore::new())),
@@ -710,6 +728,13 @@ impl NodeDaemon {
 
         let peers = self.peers.lock().expect("peer table poisoned");
         let mut targets: Vec<SocketAddr> = self.config.mesh.seeds.clone();
+        if let Some(mdns) = &self.mdns {
+            for addr in mdns.targets() {
+                if !targets.contains(&addr) {
+                    targets.push(addr);
+                }
+            }
+        }
         for peer in peers.live_peers() {
             if peer.node_id != self.self_id {
                 if let Some(addr) = peer.addr {

@@ -34,7 +34,7 @@ in-tree; unchecked items are pending. Stubbed integration points are marked.
 - [x] Gossip discovery: beacon replies carry the responder's peer-table snapshot, so a single seed propagates the full view (star topologies work)
 - [ ] BLE transport (control plane beacons)
 - [ ] UWB ranging integration
-- [ ] Wi-Fi mDNS peer detection
+- [x] Wi-Fi mDNS peer detection (`mdns` feature via mdns-sd; zero-config bootstrap feeding the beacon/gossip path)
 - [x] Mesh directory DHT (`MeshDht` implements `DhtClient` over `TcpMesh`): announce floods adverts, lookup unions all reachable peer tables, capability-filtered
 - [ ] Key-routed DHT (Kademlia-style rendezvous) for wide-area indexing
 

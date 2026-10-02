@@ -57,9 +57,12 @@ pub struct ControlConfig {
 pub struct MeshConfig {
     /// Address this node's mesh listener binds; `None` disables the mesh.
     pub listen: Option<SocketAddr>,
-    /// Bootstrap peer addresses contacted on every heartbeat. A static
-    /// seed list is the v0 discovery model; gossip comes later.
+    /// Bootstrap peer addresses contacted on every heartbeat. Static seeds
+    /// plus gossip: one seed propagates the whole view.
     pub seeds: Vec<SocketAddr>,
+    /// Advertise and discover peers via mDNS on the LAN (zero-config
+    /// bootstrap; discovered addresses act as seeds).
+    pub mdns: bool,
 }
 
 /// Fully-parsed daemon configuration.
@@ -303,6 +306,7 @@ impl NodeConfig {
         } else {
             None
         };
+        let mdns = opt_bool(mesh_sec, "mesh", "mdns")?.unwrap_or(false);
         let mut seeds = Vec::new();
         if let Some(arr) = mesh_sec
             .and_then(|m| m.get("seeds"))
@@ -348,6 +352,7 @@ impl NodeConfig {
             mesh: MeshConfig {
                 listen: mesh_listen,
                 seeds,
+                mdns,
             },
             jit_cache,
             checkpoint_dir,
@@ -519,6 +524,29 @@ mod tests {
                 .unwrap();
         assert!(off.identity.state_file.is_none());
         assert!(off.jit_cache.is_none());
+    }
+
+    #[test]
+    fn mesh_mdns_flag_parses() {
+        let on = NodeConfig::from_toml_str(
+            "[mesh]
+listen_port = 0
+mdns = true",
+        )
+        .unwrap();
+        assert!(on.mesh.mdns);
+        assert!(
+            on.mesh.listen.is_some(),
+            "section presence enables the mesh"
+        );
+        let off = NodeConfig::from_toml_str(
+            "[mesh]
+listen_port = 0",
+        )
+        .unwrap();
+        assert!(!off.mesh.mdns);
+        let absent = NodeConfig::from_toml_str("").unwrap();
+        assert!(!absent.mesh.mdns);
     }
 
     #[test]

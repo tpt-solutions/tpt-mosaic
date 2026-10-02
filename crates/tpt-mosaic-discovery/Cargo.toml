@@ -8,6 +8,11 @@ edition.workspace    = true
 rust-version.workspace = true
 repository.workspace = true
 
+[features]
+# LAN zero-config discovery via mDNS (mdns-sd; no system daemon required).
+mdns = ["dep:mdns-sd"]
+
 [dependencies]
+mdns-sd          = { workspace = true, optional = true }
 tpt-mosaic-core  = { workspace = true, features = ["std"] }
 tpt-mosaic-proto = { workspace = true, features = ["std"] }

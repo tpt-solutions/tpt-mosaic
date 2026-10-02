@@ -49,8 +49,12 @@ peer_max_age_ms = 30000
 # The section's presence ENABLES the mesh; listen_port 0 binds an ephemeral
 # port — peers learn the real port from this node's beacons. Omit the whole
 # section to run standalone (local 1-of-1 tasks only).
-listen_addr = "127.0.0.1"
+# Bind 0.0.0.0 when mDNS is on: peers reach you on your LAN address.
+listen_addr = "0.0.0.0"
 listen_port = 0
+# Advertise and discover peers via mDNS (zero-config bootstrap). Discovered
+# addresses act as seeds; beacon/gossip does the rest.
+mdns = true
 # Bootstrap peers contacted on every heartbeat. Static seeds are the v0
 # discovery model; each seed must also list this node (or exchange beacons
 # transitively) to be discovered by it.

@@ -15,6 +15,9 @@ pub use peer_table::PeerTable;
 pub use traits::{BeaconBroadcaster, BeaconScanner, DhtClient};
 pub use transport::{FrameHandler, TcpMesh};
 
+#[cfg(feature = "mdns")]
+pub mod mdns;
+
 mod dht;
 mod peer_table;
 mod traits;
