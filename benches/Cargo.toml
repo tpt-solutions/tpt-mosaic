@@ -1,0 +1,24 @@
+[package]
+name        = "tpt-mosaic-benches"
+version     = "0.1.0"
+publish     = false
+description = "Criterion benchmarks for tpt-mosaic hot paths"
+authors.workspace    = true
+license.workspace    = true
+edition.workspace    = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dev-dependencies]
+criterion           = { workspace = true }
+tpt-mosaic-core     = { workspace = true }
+tpt-mosaic-proto    = { workspace = true }
+tpt-mosaic-task     = { workspace = true }
+tpt-mosaic-verify   = { workspace = true, features = ["std"] }
+tpt-mosaic-quorum   = { workspace = true }
+tpt-mosaic-scheduler = { workspace = true }
+tpt-mosaic-discovery = { workspace = true }
+
+[[bench]]
+name   = "mosaic"
+harness = false

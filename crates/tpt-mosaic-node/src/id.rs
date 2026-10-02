@@ -37,6 +37,26 @@ pub fn generate_task_id() -> TaskId {
     TaskId::from_bytes(generate_bytes())
 }
 
+/// Load a persisted identity from `path`, generating and storing a fresh
+/// one when the file is missing or unreadable. Best-effort: if the write
+/// fails, the generated ID is still returned — it just will not survive
+/// restarts.
+pub fn load_or_create(path: &std::path::Path) -> std::io::Result<NodeId> {
+    if let Ok(text) = std::fs::read_to_string(path) {
+        if let Some(bytes) = parse_hex16(text.trim()) {
+            return Ok(NodeId::from_bytes(bytes));
+        }
+    }
+    let id = generate_node_id();
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    std::fs::write(path, to_hex(id.as_bytes()))?;
+    Ok(id)
+}
+
 /// Lowercase hex-encode `bytes`.
 pub fn to_hex(bytes: &[u8]) -> String {
     use std::fmt::Write;
@@ -88,6 +108,30 @@ mod tests {
         assert!(parse_hex("zz").is_none());
         assert!(parse_hex("abc").is_none()); // odd length
         assert!(parse_hex16("0011").is_none()); // wrong length
+    }
+
+    #[test]
+    fn identity_persists_across_loads() {
+        let dir = std::env::temp_dir().join(format!("mosaic-id-{}-persist", std::process::id()));
+        let path = dir.join("node.id");
+        let first = load_or_create(&path).expect("create identity");
+        assert!(path.is_file(), "identity file must be written");
+        let second = load_or_create(&path).expect("reload identity");
+        assert_eq!(first, second, "identity must be stable across restarts");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn corrupt_identity_file_regenerates() {
+        let dir = std::env::temp_dir().join(format!("mosaic-id-{}-corrupt", std::process::id()));
+        let path = dir.join("node.id");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, "not-hex").unwrap();
+        let id = load_or_create(&path).expect("regenerate identity");
+        assert_ne!(id, tpt_mosaic_core::NodeId::NIL);
+        // The file now holds the fresh identity in hex.
+        assert_eq!(load_or_create(&path).unwrap(), id);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

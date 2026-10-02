@@ -6,9 +6,18 @@
 # 32-hex-character node identity (16 bytes). Leave empty to generate a random
 # identity at startup.
 id = ""
+# Persist the identity to this file when `id` is empty: the first startup
+# generates and stores it; later restarts reuse it. Leave empty for
+# per-run identities.
+state_file = ""
 # Node role in the fabric: "edge" (car / robot / phone / IoT tile) or
 # "anchor" (datacenter ballast running on idle or spot capacity).
 kind = "edge"
+
+[compiler]
+# On-disk cache for compiled artifacts, keyed by a (workload, hardware)
+# fingerprint. Leave empty to compile without caching.
+cache_dir = ""
 
 [hardware]
 # GPU silicon advertised to the scheduler: none | nvidia | amd | apple | intel | other

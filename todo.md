@@ -35,7 +35,8 @@ in-tree; unchecked items are pending. Stubbed integration points are marked.
 - [ ] BLE transport (control plane beacons)
 - [ ] UWB ranging integration
 - [ ] Wi-Fi mDNS peer detection
-- [ ] DHT integration for global node indexing
+- [x] Mesh directory DHT (`MeshDht` implements `DhtClient` over `TcpMesh`): announce floods adverts, lookup unions all reachable peer tables, capability-filtered
+- [ ] Key-routed DHT (Kademlia-style rendezvous) for wide-area indexing
 
 ## Phase 4 — `tpt-mosaic-scheduler`
 
@@ -45,14 +46,14 @@ in-tree; unchecked items are pending. Stubbed integration points are marked.
 - [x] Timeout policy engine (`StragglerPolicy`)
 - [x] Networked dispatch wired: assembler selects live peers, mesh RPC bounded by timeouts
 - [x] `DispatchTracker` + `StragglerPolicy` wired into mesh dispatch: failed/missing members are replaced 1:1 from the spare pool (tested with a dead anchor member in a 5-of-5 round)
-- [ ] Edge/anchor ratio balancing policy
+- [x] Edge/anchor ratio balancing policy (`BalancedAssembler`, min/max anchors)
 
 ## Phase 5 — `tpt-mosaic-task`
 
 - [x] Micro-task splitting (shards) and reassembly
-- [x] `Checkpoint` type
-- [ ] Checkpoint/restore wiring into the executor
-- [ ] Priority queue with preemption
+- [x] `Checkpoint` type + disk persistence + `TaskProgress` resume cursor
+- [x] Priority queue with preemption (`TaskQueue::preempt_below`, spec §5.2)
+- [ ] Checkpoint/restore wiring into the daemon executor (library API done)
 - [ ] Data-routing guard: raw weights never routed over cellular
 
 ## Phase 6 — `tpt-mosaic-compiler`
@@ -61,7 +62,7 @@ in-tree; unchecked items are pending. Stubbed integration points are marked.
 - [x] `tpt-gpu-runtime` integration (`gpu` feature): TPTIR text compiled via `Device::load_module`
 - [x] `tpt-crucible-catalyst` integration (`crucible` feature): SafeTensors/GGUF lowered to TPT-IR
 - [ ] Real CUDA/Metal/Vulkan hardware paths (upstream `cuda` feature, opt-in)
-- [ ] On-disk JIT binary cache keyed by fingerprint
+- [x] On-disk JIT binary cache keyed by fingerprint (`JitCache`, `[compiler] cache_dir`)
 
 ## Phase 7 — `tpt-mosaic-sandbox`
 
@@ -107,13 +108,15 @@ in-tree; unchecked items are pending. Stubbed integration points are marked.
 - [x] `real-backends` feature: daemon builds against the real tpt-gpu/crucible/archon/eve backends
 - [x] Local TCP control API (`STATUS` / `PEERS` / `SUBMIT` / `HELP`)
 - [ ] Networked task dispatch (scheduler → real transports)
-- [ ] Persistent node identity across restarts
+- [x] Persistent node identity across restarts (`[node] state_file`)
 - [ ] systemd / launchd packaging
 
 ## Phase 12 — Hardening & Release
 
 - [x] Dependency audit (removed unused `tokio`/`tracing`/`flatbuffers`/`proto` deps; re-add per roadmap)
 - [ ] Fuzzing (`cargo-fuzz`) for proto decoding and the quorum state machine
-- [ ] Benchmark suite (criterion) for sharding, hashing, quorum evaluation
+- [x] Benchmark suite (criterion, `benches/`): codec, sharding, hashing, quorum evaluation, assembly
+- [ ] Benchmark regression tracking (critical thresholds in CI)
 - [ ] `no_std` feature-combination matrix (`cargo-hack`) in CI
-- [ ] v0.1.0 release + crates.io publish
+- [x] v0.1.0 CHANGELOG
+- [ ] crates.io publish — blocked on the upstream tpt-* crates publishing first (Cargo rejects git dependencies in published packages; confirmed via `cargo package --dry-run`)

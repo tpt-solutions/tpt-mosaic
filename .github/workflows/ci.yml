@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [master, develop]
   pull_request:
-    branches: [main]
+    branches: [master]
 
 env:
   CARGO_TERM_COLOR: always
@@ -48,6 +48,17 @@ jobs:
       # and std modes.
       - run: cargo test -p tpt-mosaic-proto --features std
 
+  no-std:
+    name: no_std feature matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-hack
+      - uses: Swatinem/rust-cache@v2
+      # The no_std-capable crates: every feature combination must check.
+      - run: cargo hack check --each-feature --no-dev-deps -p tpt-mosaic-core -p tpt-mosaic-proto
+
   external-backends:
     name: External backends (all features)
     runs-on: ubuntu-latest
@@ -65,6 +76,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --release
+      # Type-check benchmarks without running them.
+      - run: cargo bench --workspace --no-run
 
   doc:
     name: Docs

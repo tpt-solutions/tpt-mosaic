@@ -10,10 +10,12 @@ use std::time::{Duration, Instant};
 
 use tpt_mosaic_core::{CapabilityFlags, HardwareProfile, NodeId};
 
+pub use dht::{answer_query, MeshDht};
 pub use peer_table::PeerTable;
 pub use traits::{BeaconBroadcaster, BeaconScanner, DhtClient};
 pub use transport::{FrameHandler, TcpMesh};
 
+mod dht;
 mod peer_table;
 mod traits;
 mod transport;

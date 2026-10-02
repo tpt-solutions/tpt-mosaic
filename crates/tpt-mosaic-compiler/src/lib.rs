@@ -16,6 +16,10 @@
 
 #![deny(missing_docs)]
 
+mod cache;
+
+pub use cache::JitCache;
+
 use tpt_mosaic_core::{GpuVendor, HardwareProfile, MosaicError};
 
 /// Identifies which compilation backend should handle a workload.

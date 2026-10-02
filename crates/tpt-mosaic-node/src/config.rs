@@ -25,10 +25,15 @@ const DEFAULT_CONTROL_PORT: u64 = 7331;
 /// Identity and role of this node.
 #[derive(Debug, Clone)]
 pub struct IdentityConfig {
-    /// Node identity; `None` generates a random ID at startup.
+    /// Node identity; `None` generates a random ID at startup (persisted to
+    /// `state_file` when configured).
     pub id: Option<NodeId>,
     /// Edge tile or datacenter anchor.
     pub kind: NodeKind,
+    /// Optional path for the persisted identity. When set and `id` is
+    /// empty, the identity is loaded from (or generated into) this file so
+    /// it survives restarts.
+    pub state_file: Option<std::path::PathBuf>,
 }
 
 /// Discovery and heartbeat tuning.
@@ -76,6 +81,11 @@ pub struct NodeConfig {
     pub control: Option<ControlConfig>,
     /// Mesh networking, if enabled.
     pub mesh: MeshConfig,
+    /// Optional on-disk cache directory for compiled artifacts.
+    pub jit_cache: Option<std::path::PathBuf>,
+    /// Optional directory for in-flight task checkpoints, enabling resume of
+    /// interrupted executions.
+    pub checkpoint_dir: Option<std::path::PathBuf>,
 }
 
 /// Configuration parse failure with a human-readable description.
@@ -122,6 +132,9 @@ impl NodeConfig {
             Some("anchor") => NodeKind::AnchorBallast,
             Some(other) => return Err(bad_value("node.kind", other, &["edge", "anchor"])),
         };
+        let state_file = opt_str(node, "node", "state_file")?
+            .filter(|s| !s.is_empty())
+            .map(std::path::PathBuf::from);
 
         // ── [hardware] ────────────────────────────────────────────────────
         let hw = root.get("hardware");
@@ -261,6 +274,16 @@ impl NodeConfig {
             listen: SocketAddr::new(listen_ip, listen_port),
         });
 
+        // ── [compiler] ────────────────────────────────────────────────────
+        let jit_cache = opt_str(root.get("compiler"), "compiler", "cache_dir")?
+            .filter(|s| !s.is_empty())
+            .map(std::path::PathBuf::from);
+
+        // ── [task] ────────────────────────────────────────────────────────
+        let checkpoint_dir = opt_str(root.get("task"), "task", "checkpoint_dir")?
+            .filter(|s| !s.is_empty())
+            .map(std::path::PathBuf::from);
+
         // ── [mesh] ────────────────────────────────────────────────────────
         // The section's presence enables the mesh. `listen_port` defaults to
         // 0 = bind an ephemeral port (the OS picks; peers learn the real port
@@ -300,7 +323,11 @@ impl NodeConfig {
         }
 
         Ok(Self {
-            identity: IdentityConfig { id, kind },
+            identity: IdentityConfig {
+                id,
+                kind,
+                state_file,
+            },
             hardware: HardwareProfile {
                 kind,
                 gpu_vendor,
@@ -322,6 +349,8 @@ impl NodeConfig {
                 listen: mesh_listen,
                 seeds,
             },
+            jit_cache,
+            checkpoint_dir,
         })
     }
 }
@@ -403,6 +432,9 @@ mod tests {
             cfg.control.unwrap().listen,
             SocketAddr::from_str("127.0.0.1:7331").unwrap()
         );
+        assert!(cfg.identity.state_file.is_none());
+        assert!(cfg.jit_cache.is_none());
+        assert!(cfg.checkpoint_dir.is_none());
     }
 
     #[test]
@@ -464,6 +496,40 @@ mod tests {
     fn port_zero_disables_control_api() {
         let cfg = NodeConfig::from_toml_str("[control]\nlisten_port = 0").unwrap();
         assert!(cfg.control.is_none());
+    }
+
+    #[test]
+    fn state_file_and_jit_cache_parse() {
+        let cfg = NodeConfig::from_toml_str(
+            "[node]\nstate_file = \"mosaic-node.id\"\n\n[compiler]\ncache_dir = \"target/jit\"",
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.identity.state_file.as_deref(),
+            Some(std::path::Path::new("mosaic-node.id"))
+        );
+        assert_eq!(
+            cfg.jit_cache.as_deref(),
+            Some(std::path::Path::new("target/jit"))
+        );
+
+        // Empty strings mean disabled.
+        let off =
+            NodeConfig::from_toml_str("[node]\nstate_file = \"\"\n\n[compiler]\ncache_dir = \"\"")
+                .unwrap();
+        assert!(off.identity.state_file.is_none());
+        assert!(off.jit_cache.is_none());
+    }
+
+    #[test]
+    fn checkpoint_dir_parses() {
+        let cfg = NodeConfig::from_toml_str("[task]\ncheckpoint_dir = \"state/cp\"").unwrap();
+        assert_eq!(
+            cfg.checkpoint_dir.as_deref(),
+            Some(std::path::Path::new("state/cp"))
+        );
+        let off = NodeConfig::from_toml_str("").unwrap();
+        assert!(off.checkpoint_dir.is_none());
     }
 
     #[test]

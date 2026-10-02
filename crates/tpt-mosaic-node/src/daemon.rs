@@ -22,13 +22,15 @@ use tpt_mosaic_discovery::{BeaconBroadcaster, FrameHandler, PeerRecord, PeerTabl
 use tpt_mosaic_economy::chains::{BaseSettlement, NearSettlement, SolanaSettlement};
 use tpt_mosaic_economy::{calculate_reward, Chain, ReputationStore, Settlement};
 use tpt_mosaic_proto::codec::MAX_GOSSIP_PEERS;
-use tpt_mosaic_proto::{HeartbeatBeacon, PeerAdvert, PeerGossip, TaskAssignment, WireMessage};
+use tpt_mosaic_proto::{
+    DhtQuery, HeartbeatBeacon, PeerAdvert, PeerGossip, TaskAssignment, WireMessage,
+};
 use tpt_mosaic_quorum::{HashCollector, QuorumResult, QuorumState};
 use tpt_mosaic_sandbox::{CapabilityGrant, Sandbox, ThermalPolicy};
-use tpt_mosaic_scheduler::{
-    DispatchTracker, HeterogeneousAssembler, SchedulerPolicy, StragglerPolicy,
+use tpt_mosaic_scheduler::{BalancedAssembler, DispatchTracker, SchedulerPolicy, StragglerPolicy};
+use tpt_mosaic_task::{
+    restore_checkpoint, save_checkpoint, split_task, TaskPriority, TaskProgress,
 };
-use tpt_mosaic_task::{split_task, TaskPriority};
 use tpt_mosaic_verify::{hash_output, HashAlgorithm};
 
 use crate::config::NodeConfig;
@@ -112,6 +114,10 @@ pub struct NodeDaemon {
     /// The bound listener's address, captured at construction so it stays
     /// available after `start_mesh` takes the listener.
     mesh_addr: Option<SocketAddr>,
+    /// Compiled-artifact cache, when `[compiler] cache_dir` is configured.
+    jit: Option<compiler::JitCache>,
+    /// Checkpoint directory, when `[task] checkpoint_dir` is configured.
+    checkpoints: Option<std::path::PathBuf>,
     broadcaster: TracingBroadcaster,
     sandbox: Sandbox,
     reputation: Arc<Mutex<ReputationStore>>,
@@ -141,8 +147,23 @@ impl NodeDaemon {
     /// the mesh listener (when `[mesh]` is configured) so
     /// [`NodeDaemon::mesh_addr`] is known before [`NodeDaemon::run`] starts.
     pub fn new(config: NodeConfig) -> Self {
-        let self_id = config.identity.id.unwrap_or_else(id::generate_node_id);
+        let self_id = match config.identity.id {
+            Some(id) => id,
+            None => match &config.identity.state_file {
+                Some(path) => id::load_or_create(path).unwrap_or_else(|e| {
+                    tracing::warn!(
+                        path = %path.display(),
+                        error = %e,
+                        "identity state file unusable; using a random id"
+                    );
+                    id::generate_node_id()
+                }),
+                None => id::generate_node_id(),
+            },
+        };
         let peer_max_age = config.discovery.peer_max_age;
+        let jit = config.jit_cache.as_deref().map(compiler::JitCache::new);
+        let checkpoints = config.checkpoint_dir.clone();
         let mesh_listener = match config.mesh.listen {
             Some(addr) => match TcpListener::bind(addr) {
                 Ok(listener) => {
@@ -164,6 +185,8 @@ impl NodeDaemon {
             peers: Arc::new(Mutex::new(PeerTable::new(peer_max_age))),
             mesh_listener: Mutex::new(mesh_listener),
             mesh_addr,
+            jit,
+            checkpoints,
             broadcaster: TracingBroadcaster,
             sandbox: Sandbox::new(ThermalPolicy::default()),
             reputation: Arc::new(Mutex::new(ReputationStore::new())),
@@ -262,11 +285,46 @@ impl NodeDaemon {
     ) -> Result<([u8; 32], u32), MosaicError> {
         let shards = split_task(task_id, payload, TaskPriority::Standard, SHARD_TARGET_BYTES)?;
         let grant = CapabilityGrant::new(task_id, GRANT_MAX_MEMORY_BYTES, GRANT_MAX_CPU_MS);
+
+        // Resume cursor: keyed by the (payload, hardware) fingerprint, so a
+        // resubmitted identical task continues where an interrupted one
+        // stopped. The checkpoint is removed once every shard has completed.
+        let cp_path = self.checkpoints.as_ref().map(|dir| {
+            dir.join(format!(
+                "{}.cp",
+                id::to_hex(&compiler::fingerprint(payload, &self.config.hardware))
+            ))
+        });
+        let mut progress = match &cp_path {
+            Some(path) => restore_checkpoint(path)
+                .ok()
+                .and_then(|cp| TaskProgress::from_checkpoint(&cp, shards.len() as u32).ok())
+                .unwrap_or_else(|| TaskProgress::new(task_id, shards.len() as u32)),
+            None => TaskProgress::new(task_id, shards.len() as u32),
+        };
+        if progress.completed() > 0 {
+            tracing::info!(
+                task = %id::to_hex(task_id.as_bytes()),
+                resumed_at = progress.completed(),
+                "resuming interrupted task from checkpoint"
+            );
+        }
+
         let mut output = Vec::with_capacity(payload.len());
-        for shard in &shards {
-            let compiled = compiler::compile(&shard.payload, &self.config.hardware)?;
+        for shard in &shards[progress.completed() as usize..] {
+            let compiled = match &self.jit {
+                Some(cache) => cache.compile_cached(&shard.payload, &self.config.hardware)?,
+                None => compiler::compile(&shard.payload, &self.config.hardware)?,
+            };
             let produced = self.sandbox.execute(&grant, &compiled)?;
             output.extend_from_slice(&produced);
+            progress.advance();
+            if let Some(path) = &cp_path {
+                let _ = save_checkpoint(path, &progress.checkpoint(Vec::new()));
+            }
+        }
+        if let Some(path) = &cp_path {
+            let _ = std::fs::remove_file(path);
         }
         Ok((
             hash_output(&output, HashAlgorithm::Blake3),
@@ -351,8 +409,11 @@ impl NodeDaemon {
             .live_peers()
             .cloned()
             .collect();
-        let selected =
-            HeterogeneousAssembler.assemble(&candidates, &quorum, CapabilityFlags::empty())?;
+        let selected = BalancedAssembler::default().assemble(
+            &candidates,
+            &quorum,
+            CapabilityFlags::empty(),
+        )?;
 
         let mut collector = HashCollector::new(task_id, quorum)?;
         let mut got: u32 = 0;
@@ -555,9 +616,19 @@ impl NodeDaemon {
                 );
                 None
             }
-            WireMessage::ResultHash(_) | WireMessage::DhtQuery(_) | WireMessage::PeerGossip(_) => {
-                None
+            WireMessage::DhtQuery(query) => {
+                // Mesh directory lookup (spec §6.3): reply with the matching
+                // slice of our peer table, ourselves included when we match.
+                tracing::debug!(
+                    limit = query.limit,
+                    filter = ?query.capability_filter,
+                    "mesh dht query received"
+                );
+                Some(WireMessage::PeerGossip(
+                    self.gossip_snapshot_filtered(query),
+                ))
             }
+            WireMessage::ResultHash(_) | WireMessage::PeerGossip(_) => None,
         }
     }
 
@@ -578,29 +649,53 @@ impl NodeDaemon {
     /// Build a gossip snapshot: ourselves plus the freshest live peers,
     /// capped at [`MAX_GOSSIP_PEERS`] entries.
     fn gossip_snapshot(&self) -> PeerGossip {
-        let beacon = self.current_beacon();
-        let mut adverts = vec![PeerAdvert {
-            node_id: beacon.node_id,
-            addr: beacon.addr,
-            hardware: beacon.hardware,
-            capabilities: beacon.capabilities,
-        }];
-        let peers = self.peers.lock().expect("peer table poisoned");
-        for peer in peers.live_peers() {
-            if adverts.len() >= MAX_GOSSIP_PEERS {
-                break;
+        self.gossip_snapshot_filtered(&DhtQuery {
+            key: [0; 32],
+            limit: MAX_GOSSIP_PEERS as u16,
+            capability_filter: CapabilityFlags::empty(),
+        })
+    }
+
+    /// Build a gossip snapshot restricted to `query`'s capability filter and
+    /// limit — the reply side of a mesh [`DhtQuery`].
+    fn gossip_snapshot_filtered(&self, query: &DhtQuery) -> PeerGossip {
+        let mut peers: Vec<PeerAdvert> = Vec::new();
+        let consider = |peers: &mut Vec<PeerAdvert>, advert: PeerAdvert| {
+            if peers.len() < query.limit as usize
+                && peers.len() < MAX_GOSSIP_PEERS
+                && advert.capabilities.contains(query.capability_filter)
+                && advert.hardware.is_available()
+            {
+                peers.push(advert);
             }
+        };
+
+        let beacon = self.current_beacon();
+        consider(
+            &mut peers,
+            PeerAdvert {
+                node_id: beacon.node_id,
+                addr: beacon.addr,
+                hardware: beacon.hardware,
+                capabilities: beacon.capabilities,
+            },
+        );
+        let table = self.peers.lock().expect("peer table poisoned");
+        for peer in table.live_peers() {
             if peer.node_id == self.self_id {
                 continue;
             }
-            adverts.push(PeerAdvert {
-                node_id: peer.node_id,
-                addr: peer.addr,
-                hardware: peer.hardware,
-                capabilities: peer.capabilities,
-            });
+            consider(
+                &mut peers,
+                PeerAdvert {
+                    node_id: peer.node_id,
+                    addr: peer.addr,
+                    hardware: peer.hardware,
+                    capabilities: peer.capabilities,
+                },
+            );
         }
-        PeerGossip { peers: adverts }
+        PeerGossip { peers }
     }
 
     /// Beacon exchange: refresh our own record, then trade beacons with every
@@ -877,6 +972,102 @@ mod tests {
         assert_eq!(
             daemon.settlement.balance(daemon.node_id()).unwrap(),
             receipt.reward
+        );
+    }
+
+    #[test]
+    fn interrupted_tasks_resume_from_checkpoints() {
+        let dir = std::env::temp_dir().join(format!("mosaic-cp-{}", std::process::id()));
+        let config = crate::config::NodeConfig::from_toml_str(&format!(
+            "[task]
+checkpoint_dir = {:?}",
+            dir
+        ))
+        .unwrap();
+        let daemon = NodeDaemon::new(config);
+
+        // Two shards: 100 KiB against a 64 KiB shard target.
+        let payload = vec![7u8; 100 * 1024];
+        let fingerprint = compiler::fingerprint(&payload, &daemon.config.hardware);
+        let cp_path = dir.join(format!("{}.cp", id::to_hex(&fingerprint)));
+
+        // Simulate an interruption after the first shard completed.
+        std::fs::create_dir_all(&dir).unwrap();
+        let interrupted = tpt_mosaic_task::Checkpoint {
+            task_id: TaskId::NIL,
+            last_completed_shard: 1,
+            state_blob: vec![],
+        };
+        tpt_mosaic_task::save_checkpoint(&cp_path, &interrupted).unwrap();
+
+        let receipt = daemon
+            .run_local_task(&payload, QuorumConfig::BEST_EFFORT_1_OF_1)
+            .expect("resumed task must complete");
+        // Only the remaining shard executed: the hash covers the resume slice.
+        assert_eq!(
+            receipt.agreed_hash,
+            hash_output(&payload[64 * 1024..], HashAlgorithm::Blake3)
+        );
+        assert!(!cp_path.exists(), "finished tasks clear their checkpoint");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn dht_queries_are_answered_with_filtered_gossip() {
+        let daemon = test_daemon();
+        // A CUDA-capable peer plus an unavailable one (critical thermal).
+        let cuda_peer = PeerRecord {
+            node_id: NodeId::from_bytes([7; 16]),
+            hardware: tpt_mosaic_core::HardwareProfile {
+                kind: NodeKind::AnchorBallast,
+                ..daemon.config.hardware
+            },
+            capabilities: CapabilityFlags::CUDA,
+            addr: None,
+            last_seen: Instant::now(),
+        };
+        let hot_peer = PeerRecord {
+            node_id: NodeId::from_bytes([8; 16]),
+            hardware: tpt_mosaic_core::HardwareProfile {
+                thermal_state: tpt_mosaic_core::ThermalState::Critical,
+                ..cuda_peer.hardware
+            },
+            capabilities: CapabilityFlags::CUDA,
+            addr: None,
+            last_seen: Instant::now(),
+        };
+        {
+            let mut peers = daemon.peers.lock().expect("peer table poisoned");
+            peers.upsert(cuda_peer);
+            peers.upsert(hot_peer);
+        }
+
+        // CUDA query: the matching live peer comes back; the hot peer and
+        // the daemon itself (CPU_VECTOR only) are filtered out.
+        let reply = daemon.handle_mesh_frame(&WireMessage::DhtQuery(DhtQuery {
+            key: [0; 32],
+            limit: 10,
+            capability_filter: CapabilityFlags::CUDA,
+        }));
+        let WireMessage::PeerGossip(gossip) = reply.expect("query must be answered") else {
+            panic!("reply must be gossip");
+        };
+        assert_eq!(gossip.peers.len(), 1);
+        assert_eq!(gossip.peers[0].node_id, NodeId::from_bytes([7; 16]));
+
+        // Unfiltered query: self plus the one available peer.
+        let reply = daemon.handle_mesh_frame(&WireMessage::DhtQuery(DhtQuery {
+            key: [0; 32],
+            limit: 10,
+            capability_filter: CapabilityFlags::empty(),
+        }));
+        let WireMessage::PeerGossip(gossip) = reply.expect("query must be answered") else {
+            panic!("reply must be gossip");
+        };
+        assert_eq!(
+            gossip.peers.len(),
+            2,
+            "self + the live peer, hot one excluded"
         );
     }
 }

@@ -24,7 +24,9 @@
 
 extern crate alloc;
 
-pub use codec::{decode, encode, read_frame, write_frame, WireMessage};
+pub use codec::{decode, encode, WireMessage};
+#[cfg(feature = "std")]
+pub use codec::{read_frame, write_frame};
 pub use messages::{
     CancellationReason, CancellationSignal, DhtQuery, HeartbeatBeacon, PeerAdvert, PeerGossip,
     ResultHash, TaskAssignment,

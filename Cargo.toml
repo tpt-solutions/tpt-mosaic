@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "benches",
     "crates/tpt-mosaic-core",
     "crates/tpt-mosaic-proto",
     "crates/tpt-mosaic-discovery",
@@ -36,15 +37,15 @@ tpt-mosaic-verify    = { path = "crates/tpt-mosaic-verify" }
 tpt-mosaic-economy   = { path = "crates/tpt-mosaic-economy" }
 
 # External tpt-solutions ecosystem crates (sub-crates of the four GitHub workspaces).
-# Pinned to verified revisions; bump deliberately. tpt-crucible is pinned to the
-# newest revision whose `tpt-crucible-common` compiles on stable (master @ d863899
-# shipped missing imports / an inference break in graph.rs + ops.rs).
+# Pinned to verified revisions; bump deliberately. The crucible and archon
+# pins track the fix branches (fix/crucible-common-compile, fix/template-manifest-noise)
+# — re-pin to master once those PRs merge.
 tpt-gpu-runtime       = { git = "https://github.com/tpt-solutions/tpt-gpu",      rev = "e346589a5ee4591486693ee520d7cdf3db7440aa" }
-tpt-crucible-common   = { git = "https://github.com/tpt-solutions/tpt-crucible", rev = "3605b67984996971a568e41eafcbe7734c351a38" }
-tpt-crucible-catalyst = { git = "https://github.com/tpt-solutions/tpt-crucible", rev = "3605b67984996971a568e41eafcbe7734c351a38" }
-tpt-archon-kernel     = { git = "https://github.com/tpt-solutions/tpt-archon",   rev = "62c556e39f310afdb49e06e59f586c1e42554d23" }
-tpt-archon-bridge     = { git = "https://github.com/tpt-solutions/tpt-archon",   rev = "62c556e39f310afdb49e06e59f586c1e42554d23" }
-tpt-archon-core       = { git = "https://github.com/tpt-solutions/tpt-archon",   rev = "62c556e39f310afdb49e06e59f586c1e42554d23" }
+tpt-crucible-common   = { git = "https://github.com/tpt-solutions/tpt-crucible", rev = "bca2a9ff7b94eeb95d65c4e1652909930f42841b" }
+tpt-crucible-catalyst = { git = "https://github.com/tpt-solutions/tpt-crucible", rev = "bca2a9ff7b94eeb95d65c4e1652909930f42841b" }
+tpt-archon-kernel     = { git = "https://github.com/tpt-solutions/tpt-archon",   rev = "5accc4cad30d713324b0534fb324c0fc6185492f" }
+tpt-archon-bridge     = { git = "https://github.com/tpt-solutions/tpt-archon",   rev = "5accc4cad30d713324b0534fb324c0fc6185492f" }
+tpt-archon-core       = { git = "https://github.com/tpt-solutions/tpt-archon",   rev = "5accc4cad30d713324b0534fb324c0fc6185492f" }
 tpt-eve-symbolic      = { git = "https://github.com/tpt-solutions/tpt-eve",      rev = "c230d0e83633bd0a7f8d3e6a5d830f48236427ad" }
 tpt-eve-core          = { git = "https://github.com/tpt-solutions/tpt-eve",      rev = "c230d0e83633bd0a7f8d3e6a5d830f48236427ad" }
 
@@ -53,6 +54,7 @@ bitflags    = "2"
 blake3      = { version = "1", default-features = false }
 sha2        = { version = "0.10", default-features = false }
 flatbuffers = "24"
+criterion   = { version = "0.5", default-features = false, features = ["cargo_bench_support"] }
 proptest    = "1"
 toml        = { version = "0.8", default-features = false, features = ["parse"] }
 tracing     = "0.1"
