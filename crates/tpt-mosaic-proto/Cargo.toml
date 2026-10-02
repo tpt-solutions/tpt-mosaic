@@ -1,0 +1,25 @@
+[package]
+name        = "tpt-mosaic-proto"
+version     = "0.1.0"
+description = "FlatBuffers wire protocol and zero-copy serialization for tpt-mosaic inter-node communication"
+authors.workspace    = true
+license.workspace    = true
+edition.workspace    = true
+rust-version.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+std     = ["tpt-mosaic-core/std"]
+
+[dependencies]
+tpt-mosaic-core = { workspace = true }
+# flatbuffers — re-add when the flatc build.rs code-gen replaces the
+# hand-rolled codec in `src/codec.rs`.
+
+[build-dependencies]
+# flatc code generation — requires flatc binary on PATH
+# flatbuffers = { workspace = true, features = ["build"] }
+
+[dev-dependencies]
+proptest = { workspace = true }

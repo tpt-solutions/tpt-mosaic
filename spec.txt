@@ -1,0 +1,156 @@
+# tpt-mosaic: Design Specification
+
+## 1. Executive Summary
+**tpt-mosaic** is a decentralized, ambient compute fabric that unifies idle edge devices (cars, robots, consumer electronics) and datacenter infrastructure into a single, self-verifying peer-to-peer network. By leveraging dynamic quorum consensus and heterogeneous hardware execution, tpt-mosaic transforms fragmented, idle silicon into a mathematically secure, globally distributed supercomputer.
+
+## 2. Core Architecture: The Hybrid Fabric
+tpt-mosaic operates on a hybrid topology, combining the ubiquity of the edge with the stability of the datacenter.
+
+*   **Edge Nodes (The Tiles)**: Cars, robots, phones, and IoT devices. They provide ultra-low latency, geographically diverse, and highly cost-effective compute. They are highly volatile (subject to network churn and thermal/power constraints).
+*   **Anchor Nodes (The Ballast)**: Datacenters and server farms utilizing idle or "spot" capacity. They provide massive bandwidth, high reliability, and stable uptime. They act as the network's anchor, ensuring quorums can be met even if edge nodes drop offline.
+
+## 3. Dynamic Quorum Consensus & Verification
+To solve the Byzantine Fault Tolerance problem in an untrusted network, tpt-mosaic abandons single-node execution in favor of dynamic, hardware-diverse redundancy.
+
+### 3.1 Tiered Quorum Sizing
+Users select their position on the Cost vs. Latency vs. Confidence triangle:
+*   **Tier 1: Best Effort (1-of-1 or 2-of-3)**: Low cost, ultra-low latency. Ideal for casual inference, text summarization, or non-critical robotics navigation.
+*   **Tier 2: Standard Verification (3-of-5)**: Tolerates 2 faulty/malicious nodes. Ideal for financial analysis, medical screening, or autonomous lane changes.
+*   **Tier 3: Mission Critical (7-of-10+)**: Tolerates 3+ compromised nodes. Ideal for high-value smart contracts or surgical robotics.
+
+### 3.2 Heterogeneous Redundancy
+To prevent hardware-level blind spots (e.g., a silicon bug in a specific GPU affecting all nodes), the scheduler intentionally assembles diverse quorums. A 5-node quorum might consist of:
+*   2x NVIDIA GPUs (via `tpt-gpu`)
+*   1x ARM NPU (via `tpt-crucible`)
+*   1x AMD GPU (via `tpt-gpu`/Vulkan)
+*   1x CPU Vector Instructions (via `tpt-crucible`)
+*Result: The mathematical probability of all nodes hallucinating or failing in the exact same way drops to near zero.*
+
+### 3.3 Early Termination & Straggler Cancellation
+Nodes do not need to send raw data back; they submit lightweight cryptographic hashes of their outputs. The moment the required K matching hashes are received (e.g., 3 out of 5), the quorum is met. The coordinator instantly broadcasts a cancellation signal to the remaining nodes, saving edge battery life and reducing network congestion.
+
+## 4. Networking & Discovery Stack
+tpt-mosaic utilizes a tiered connectivity model to separate the control plane from the data plane, minimizing expensive cellular data usage.
+
+*   **Bluetooth Low Energy (BLE) / UWB**: Used strictly for peer discovery, heartbeat signals, and control-plane metadata. A parked car or idle robot broadcasts its capabilities and thermal state without draining its battery.
+*   **Wi-Fi (Local Mesh / Infrastructure)**: The primary data plane. Used for downloading model shards, executing batch tasks, and uploading results/proofs when devices are docked or in range.
+*   **4G/5G (Cellular)**: Fallback control plane and micro-transactions only. Used to receive task assignments and submit cryptographic proofs when off-grid. Raw model weights are never routed over cellular.
+
+## 5. Execution & Security Layer
+Running untrusted workloads on safety-critical edge devices requires absolute isolation.
+
+### 5.1 `tpt-archon` Sandboxing
+All tasks are executed inside the `tpt-archon` capability-based, zero-copy microkernel. This ensures that an AI workload is strictly confined to its granted memory and compute slices. It is physically impossible for a tpt-mosaic task to read host data or interfere with the host's primary operations.
+
+### 5.2 Safety-First Preemption
+For cars and robots, the primary Real-Time Operating System (RTOS) always takes precedence. The `tpt-archon` scheduler assigns AI tasks the lowest possible priority. If the host device requires resources (e.g., a car needs to process a sudden obstacle), the AI task is instantly paused or killed.
+
+### 5.3 Heterogeneous Compilation
+*   **`tpt-gpu`**: Handles standardized parallel compute (CUDA, Metal, Vulkan) on devices with dedicated graphics silicon.
+*   **`tpt-crucible`**: Acts as the universal fallback, compiling workloads on the fly to run efficiently on non-GPU hardware (NPUs, DSPs, FPGAs, ARM CPUs). This ensures no device is left out of the network.
+
+## 6. Crate Architecture
+The tpt-mosaic workspace is organized as a collection of focused, `no_std`-compatible Rust crates under the `tpt-mosaic-` prefix. Each crate maps to a single architectural responsibility.
+
+### 6.1 `tpt-mosaic-core`
+*   **Role**: Shared foundation. Defines all core types, traits, error enums, and constants used across the workspace.
+*   **Contents**: `NodeId`, `TaskId`, `QuorumConfig`, `HardwareProfile`, `TierLevel`, `CapabilityFlags`, wire-format versioning, and shared error types.
+*   **Dependencies**: `no_std` compatible. Minimal external dependencies.
+
+### 6.2 `tpt-mosaic-proto`
+*   **Role**: Wire protocol and serialization. Defines the binary message formats for all inter-node communication.
+*   **Contents**: Protobuf/FlatBuffers schemas for task assignments, result hashes, heartbeat beacons, cancellation signals, and DHT queries. Zero-copy deserialization support.
+*   **Dependencies**: `tpt-mosaic-core`.
+
+### 6.3 `tpt-mosaic-discovery`
+*   **Role**: Peer discovery and network topology management.
+*   **Contents**: BLE/UWB beacon broadcasting and scanning, Wi-Fi mesh peer detection, capability advertisement (hardware profile, thermal state, battery level, accepted task tiers), heartbeat protocol, and DHT integration for global node indexing.
+*   **Dependencies**: `tpt-mosaic-core`, `tpt-mosaic-proto`.
+
+### 6.4 `tpt-mosaic-scheduler`
+*   **Role**: The brain of the network. Assembles quorums and routes tasks.
+*   **Contents**: Dynamic quorum assembly logic (selecting N nodes to meet K-of-N requirements), heterogeneous hardware matching (ensuring GPU/NPU/CPU diversity), hybrid edge/datacenter balancing, timeout and straggler detection, and replacement node dispatch when nodes drop offline.
+*   **Dependencies**: `tpt-mosaic-core`, `tpt-mosaic-discovery`.
+
+### 6.5 `tpt-mosaic-task`
+*   **Role**: Workload definition, sharding, and lifecycle management.
+*   **Contents**: Micro-task splitting (breaking large jobs into 50-100ms stateless chunks), checkpoint/restore serialization for interrupted tasks, task priority queues, and input/output data routing (ensuring raw data stays on Wi-Fi, not cellular).
+*   **Dependencies**: `tpt-mosaic-core`, `tpt-mosaic-proto`.
+
+### 6.6 `tpt-mosaic-compiler`
+*   **Role**: Hardware-aware compilation dispatch layer.
+*   **Contents**: Inspects the target node's `HardwareProfile` and routes the workload to either `tpt-gpu` (for CUDA/Metal/Vulkan targets) or `tpt-crucible` (for NPU/DSP/FPGA/CPU targets). Handles JIT compilation caching, binary fingerprinting, and fallback chain logic if the primary compilation target fails.
+*   **Dependencies**: `tpt-mosaic-core`, `tpt-gpu`, `tpt-crucible`.
+
+### 6.7 `tpt-mosaic-sandbox`
+*   **Role**: Secure execution environment integration.
+*   **Contents**: `tpt-archon` kernel interface, capability grant construction (defining exact memory/compute slices for each task), preemption hook registration (ensuring host RTOS can kill the task instantly), thermal and battery monitoring callbacks, and zero-copy I/O channel setup.
+*   **Dependencies**: `tpt-mosaic-core`, `tpt-archon`.
+
+### 6.8 `tpt-mosaic-quorum`
+*   **Role**: Consensus validation and result aggregation.
+*   **Contents**: Hash collection and comparison logic, K-of-N threshold evaluation, early termination signaling (broadcasting cancellation to remaining nodes once quorum is met), Byzantine fault detection (flagging nodes whose hashes consistently diverge), and quorum state machine management.
+*   **Dependencies**: `tpt-mosaic-core`, `tpt-mosaic-proto`.
+
+### 6.9 `tpt-mosaic-verify`
+*   **Role**: Cryptographic and symbolic proof generation/validation.
+*   **Contents**: Output hash generation (SHA-256/BLAKE3 of inference results), Zero-Knowledge ML proof stubs (ZK-ML integration points), `tpt-eve` symbolic consistency checking hooks, and proof-of-learning verification for training workloads.
+*   **Dependencies**: `tpt-mosaic-core`, `tpt-eve`.
+
+### 6.10 `tpt-mosaic-economy`
+*   **Role**: Incentive layer, reputation, and settlement.
+*   **Contents**: Micro-reward calculation based on quorum tier and hardware contribution, reputation scoring (tracking node reliability over time), slashing logic for malicious or consistently faulty nodes, datacenter spot-pricing integration, and settlement ledger interface.
+*   **Dependencies**: `tpt-mosaic-core`, `tpt-mosaic-quorum`.
+
+### 6.11 `tpt-mosaic-node`
+*   **Role**: The main daemon binary. The single entry point that runs on every device (edge or datacenter).
+*   **Contents**: Initializes all subsystems, manages the node lifecycle (startup, heartbeat loop, task execution, graceful shutdown), exposes a local control API for the host OS, and handles configuration (network interfaces, hardware profiles, economic preferences).
+*   **Dependencies**: All `tpt-mosaic-*` crates.
+
+### 6.12 Crate Dependency Graph
+
+tpt-mosaic
+├── tpt-mosaic-scheduler
+│ ├── tpt-mosaic-discovery
+│ │ ├── tpt-mosaic-proto
+│ │ │ └── tpt-mosaic-core
+│ │ └── tpt-mosaic-core
+│ └── tpt-mosaic-core
+├── tpt-mosaic-task
+│ ├── tpt-mosaic-proto
+│ └── tpt-mosaic-core
+├── tpt-mosaic-compiler
+│ ├── tpt-gpu (external tpt crate)
+│ ├── tpt-crucible (external tpt crate)
+│ └── tpt-mosaic-core
+├── tpt-mosaic-sandbox
+│ ├── tpt-archon (external tpt crate)
+│ └── tpt-mosaic-core
+├── tpt-mosaic-quorum
+│ ├── tpt-mosaic-proto
+│ └── tpt-mosaic-core
+├── tpt-mosaic-verify
+│ ├── tpt-eve (external tpt crate)
+│ └── tpt-mosaic-core
+└── tpt-mosaic-economy
+├── tpt-mosaic-quorum
+└── tpt-mosaic-core
+
+
+## 7. Economic Model
+tpt-mosaic creates a permissionless, free-market compute economy.
+
+*   **Dynamic Pricing**: The cost of a job scales with the quorum size and hardware diversity required. A 7-of-10 heterogeneous quorum costs significantly more than a 1-of-1 edge inference.
+*   **Datacenter "Spot" Revenue**: Datacenter operators can run the tpt-mosaic-node daemon in the background to monetize idle capacity. If internal enterprise workloads spike, the local orchestrator instantly evicts tpt-mosaic tasks, functioning as a decentralized, global spot-instance market.
+*   **Micro-Rewards & Slashing**: Edge nodes earn micro-rewards for successful quorum contributions. Nodes that submit mismatched hashes or fail to respond are flagged by `tpt-mosaic-economy`; repeated failures result in reputation degradation or token slashing.
+
+## 8. Task Lifecycle Flow
+1.  **Request**: A user submits a job, specifying the required quorum (e.g., 3-of-5) and budget.
+2.  **Discovery & Routing**: `tpt-mosaic-scheduler` queries `tpt-mosaic-discovery` via BLE/Wi-Fi, identifying available nodes and their hardware profiles.
+3.  **Compilation**: `tpt-mosaic-compiler` generates hardware-specific binaries for each target node via `tpt-gpu` or `tpt-crucible`.
+4.  **Diverse Dispatch**: The task is dispatched to a heterogeneous mix of edge and anchor nodes.
+5.  **Sandboxed Execution**: `tpt-mosaic-sandbox` executes the task inside `tpt-archon`, respecting host preemption rules.
+6.  **Verification**: `tpt-mosaic-verify` validates cryptographic hashes and symbolic proofs returned by each node.
+7.  **Early Exit**: `tpt-mosaic-quorum` confirms the K-of-N threshold is met and cancels remaining nodes.
+8.  **Settlement**: `tpt-mosaic-economy` credits successful nodes and returns the final result to the user.
+

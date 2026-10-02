@@ -1,0 +1,63 @@
+# Example configuration for tpt-mosaic-node.
+# Copy to node.toml and edit. Every field is optional; the values shown are
+# the defaults applied when a field or whole section is omitted.
+
+[node]
+# 32-hex-character node identity (16 bytes). Leave empty to generate a random
+# identity at startup.
+id = ""
+# Node role in the fabric: "edge" (car / robot / phone / IoT tile) or
+# "anchor" (datacenter ballast running on idle or spot capacity).
+kind = "edge"
+
+[hardware]
+# GPU silicon advertised to the scheduler: none | nvidia | amd | apple | intel | other
+gpu_vendor = "none"
+# Dedicated Neural Processing Unit present.
+npu_present = false
+# Host CPU architecture: x86_64 | aarch64 | riscv64 | other
+cpu_arch = "x86_64"
+# Available RAM in megabytes.
+memory_mb = 8192
+# Battery charge 0-100, or 255 for mains-powered devices (no battery).
+battery_level = 255
+# Thermal state: nominal | warm | hot | critical
+thermal_state = "nominal"
+
+[capabilities]
+# Compute capability flags advertised in heartbeat beacons. Any combination of:
+# cuda, metal, vulkan, npu, dsp, fpga, cpu_vector
+flags = ["cpu_vector"]
+
+[discovery]
+# Period between heartbeat broadcasts (control plane; BLE/UWB/Wi-Fi).
+heartbeat_interval_ms = 5000
+# Peers not heard from within this window are evicted from the peer table.
+peer_max_age_ms = 30000
+
+[mesh]
+# TCP mesh for peer discovery and quorum dispatch (loopback/LAN data plane).
+# The section's presence ENABLES the mesh; listen_port 0 binds an ephemeral
+# port — peers learn the real port from this node's beacons. Omit the whole
+# section to run standalone (local 1-of-1 tasks only).
+listen_addr = "127.0.0.1"
+listen_port = 0
+# Bootstrap peers contacted on every heartbeat. Static seeds are the v0
+# discovery model; each seed must also list this node (or exchange beacons
+# transitively) to be discovered by it.
+seeds = ["127.0.0.1:7801", "127.0.0.1:7802"]
+
+[economy]
+# Settlement chain for earned micro-rewards: solana | base | near
+chain = "solana"
+# Optional RPC endpoint handed to the settlement adapter. The current stub
+# adapters settle against a local in-memory ledger; real RPC calls land with
+# the chain SDK features.
+# rpc_url = "https://api.mainnet-beta.solana.com"
+
+[control]
+# Local control API for the host OS (line protocol over loopback TCP):
+#   STATUS | PEERS | SUBMIT [best|standard|critical] <hex-payload> | HELP
+# Set listen_port to 0 to disable.
+listen_addr = "127.0.0.1"
+listen_port = 7331

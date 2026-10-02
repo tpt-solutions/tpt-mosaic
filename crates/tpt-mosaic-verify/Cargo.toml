@@ -1,0 +1,26 @@
+[package]
+name        = "tpt-mosaic-verify"
+version     = "0.1.0"
+description = "Cryptographic output hashing (BLAKE3/SHA-256), ZK-ML proof stubs, and tpt-eve consistency hooks"
+authors.workspace    = true
+license.workspace    = true
+edition.workspace    = true
+rust-version.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+std     = ["tpt-mosaic-core/std", "blake3/std", "sha2/std"]
+# Real symbolic consistency checking via tpt-eve: output claims are lowered to
+# provenance/confidence-scored facts and checked for contradictions.
+eve     = ["dep:tpt-eve-symbolic", "dep:tpt-eve-core", "std"]
+
+[dependencies]
+tpt-mosaic-core = { workspace = true }
+blake3          = { workspace = true }
+sha2            = { workspace = true }
+tpt-eve-symbolic = { workspace = true, optional = true }
+tpt-eve-core     = { workspace = true, optional = true }
+
+[dev-dependencies]
+proptest = { workspace = true }

@@ -1,0 +1,22 @@
+[package]
+name        = "tpt-mosaic-sandbox"
+version     = "0.1.0"
+description = "tpt-archon microkernel interface, capability grants, and RTOS preemption hooks"
+authors.workspace    = true
+license.workspace    = true
+edition.workspace    = true
+rust-version.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+# Real capability-confined execution via the tpt-archon microkernel: memory
+# slices are enforced by minted capabilities (map_read/map_write) and work
+# runs as a cooperative task on the kernel scheduler.
+archon  = ["dep:tpt-archon-kernel", "dep:tpt-archon-bridge", "dep:tpt-archon-core"]
+
+[dependencies]
+tpt-mosaic-core = { workspace = true, features = ["std"] }
+tpt-archon-kernel = { workspace = true, optional = true }
+tpt-archon-bridge = { workspace = true, optional = true }
+tpt-archon-core   = { workspace = true, optional = true }

@@ -1,0 +1,16 @@
+[package]
+name        = "tpt-mosaic-core"
+version     = "0.1.0"
+description = "Shared foundation types, traits, error enums, and constants for the tpt-mosaic workspace"
+authors.workspace    = true
+license.workspace    = true
+edition.workspace    = true
+rust-version.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+std     = []
+
+[dependencies]
+bitflags = { workspace = true }

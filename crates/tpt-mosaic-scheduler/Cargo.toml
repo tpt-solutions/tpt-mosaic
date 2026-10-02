@@ -1,0 +1,13 @@
+[package]
+name        = "tpt-mosaic-scheduler"
+version     = "0.1.0"
+description = "Quorum assembly, heterogeneous hardware matching, and task routing for tpt-mosaic"
+authors.workspace    = true
+license.workspace    = true
+edition.workspace    = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+tpt-mosaic-core      = { workspace = true, features = ["std"] }
+tpt-mosaic-discovery = { workspace = true }

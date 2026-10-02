@@ -1,0 +1,29 @@
+[package]
+name        = "tpt-mosaic-economy"
+version     = "0.1.0"
+description = "Incentive layer: micro-rewards, reputation, slashing, and on-chain settlement (Solana, Base, NEAR)"
+authors.workspace    = true
+license.workspace    = true
+edition.workspace    = true
+rust-version.workspace = true
+repository.workspace = true
+
+[features]
+default    = []
+# Feature flags reserved for the concrete RPC adapters in `chains.rs`.
+# The current adapters settle against a local in-memory ledger; enabling these
+# will swap the internals for real SDK calls once the SDK deps are re-added.
+solana     = []
+base       = []
+near       = []
+all-chains = ["solana", "base", "near"]
+
+[dependencies]
+tpt-mosaic-core   = { workspace = true, features = ["std"] }
+tpt-mosaic-quorum = { workspace = true }
+tracing           = { workspace = true }
+
+# On-chain settlement SDKs — re-enable together with the concrete RPC adapters:
+# solana-sdk          = { version = "1",    optional = true }
+# ethers              = { version = "2",    optional = true }
+# near-jsonrpc-client = { version = "0.10", optional = true }

@@ -1,0 +1,13 @@
+/target/
+**/*.fbs.generated.rs
+.env
+.env.*
+!.env.example
+*.pdb
+*.log
+node.toml
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+.claude/

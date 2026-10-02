@@ -1,0 +1,40 @@
+[package]
+name        = "tpt-mosaic-node"
+version     = "0.1.0"
+description = "tpt-mosaic node daemon — entry point that wires all subsystems and runs on every device"
+authors.workspace    = true
+license.workspace    = true
+edition.workspace    = true
+rust-version.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "tpt-mosaic-node"
+path = "src/main.rs"
+
+[features]
+default = []
+# Build the daemon against the real external backends (tpt-gpu / tpt-crucible
+# / tpt-archon / tpt-eve) instead of the in-crate stubs.
+real-backends = [
+    "tpt-mosaic-compiler/gpu",
+    "tpt-mosaic-compiler/crucible",
+    "tpt-mosaic-sandbox/archon",
+    "tpt-mosaic-verify/eve",
+]
+
+[dependencies]
+tpt-mosaic-core      = { workspace = true, features = ["std"] }
+tpt-mosaic-proto     = { workspace = true, features = ["std"] }
+tpt-mosaic-discovery = { workspace = true }
+tpt-mosaic-scheduler = { workspace = true }
+tpt-mosaic-task      = { workspace = true }
+tpt-mosaic-compiler  = { workspace = true }
+tpt-mosaic-sandbox   = { workspace = true }
+tpt-mosaic-quorum    = { workspace = true }
+tpt-mosaic-verify    = { workspace = true, features = ["std"] }
+tpt-mosaic-economy   = { workspace = true }
+tracing              = { workspace = true }
+tracing-subscriber   = { version = "0.3", features = ["env-filter", "json"] }
+tokio                = { workspace = true }
+toml                 = { workspace = true }

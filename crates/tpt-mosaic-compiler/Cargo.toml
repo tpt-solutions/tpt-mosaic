@@ -1,0 +1,25 @@
+[package]
+name        = "tpt-mosaic-compiler"
+version     = "0.1.0"
+description = "Hardware-aware compilation dispatch: routes workloads to tpt-gpu or tpt-crucible"
+authors.workspace    = true
+license.workspace    = true
+edition.workspace    = true
+rust-version.workspace = true
+repository.workspace = true
+
+[features]
+default  = []
+# Real GPU compile path via tpt-gpu-runtime (TPTIR text -> compiled module on
+# the simulated device; real CUDA hardware stays opt-in upstream).
+gpu      = ["dep:tpt-gpu-runtime"]
+# Real universal compile path via tpt-crucible: model bytes (SafeTensors, GGUF)
+# lowered to serialized TPT-IR.
+crucible = ["dep:tpt-crucible-catalyst", "dep:tpt-crucible-common"]
+
+[dependencies]
+tpt-mosaic-core = { workspace = true, features = ["std"] }
+blake3          = { workspace = true }
+tpt-gpu-runtime       = { workspace = true, optional = true }
+tpt-crucible-catalyst = { workspace = true, optional = true }
+tpt-crucible-common   = { workspace = true, optional = true }

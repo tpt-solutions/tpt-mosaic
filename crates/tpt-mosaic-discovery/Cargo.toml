@@ -1,0 +1,13 @@
+[package]
+name        = "tpt-mosaic-discovery"
+version     = "0.1.0"
+description = "Peer discovery and network topology management for tpt-mosaic (BLE/UWB/Wi-Fi, DHT, heartbeat)"
+authors.workspace    = true
+license.workspace    = true
+edition.workspace    = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+tpt-mosaic-core  = { workspace = true, features = ["std"] }
+tpt-mosaic-proto = { workspace = true, features = ["std"] }

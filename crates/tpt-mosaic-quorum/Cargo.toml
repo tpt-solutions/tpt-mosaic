@@ -1,0 +1,16 @@
+[package]
+name        = "tpt-mosaic-quorum"
+version     = "0.1.0"
+description = "K-of-N consensus validation, hash collection, early termination, and Byzantine fault detection"
+authors.workspace    = true
+license.workspace    = true
+edition.workspace    = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+tpt-mosaic-core  = { workspace = true, features = ["std"] }
+tpt-mosaic-proto = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+proptest = { workspace = true }
