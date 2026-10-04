@@ -2,11 +2,16 @@
 name        = "tpt-mosaic-sandbox"
 version     = "0.1.0"
 description = "tpt-archon microkernel interface, capability grants, and RTOS preemption hooks"
+readme = "README.md"
+keywords = ["mosaic", "sandbox", "capabilities", "microkernel", "isolation"]
+categories = ["virtualization", "os", "hardware-support", "api-bindings"]
 authors.workspace    = true
 license.workspace    = true
 edition.workspace    = true
 rust-version.workspace = true
-repository.workspace = true
+repository.workspace  = true
+homepage.workspace   = true
+documentation = "https://docs.rs/tpt-mosaic-sandbox"
 
 [features]
 default = []

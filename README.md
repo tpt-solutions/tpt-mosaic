@@ -27,17 +27,22 @@ Edge Nodes (Tiles)              Anchor Nodes (Ballast)
 
 | Crate | Role |
 |---|---|
-| `tpt-mosaic-core` | Shared types, traits, error enums (`no_std`) |
-| `tpt-mosaic-proto` | FlatBuffers wire protocol, zero-copy serialization |
-| `tpt-mosaic-discovery` | BLE/UWB/Wi-Fi peer discovery, DHT, heartbeat |
-| `tpt-mosaic-scheduler` | Quorum assembly, heterogeneous matching, straggler detection |
-| `tpt-mosaic-task` | Micro-task splitting (50–100 ms chunks), checkpoint/restore |
-| `tpt-mosaic-compiler` | Routes to `tpt-gpu` (CUDA/Metal/Vulkan) or `tpt-crucible` (NPU/DSP/CPU) |
-| `tpt-mosaic-sandbox` | `tpt-archon` microkernel interface, RTOS preemption hooks |
-| `tpt-mosaic-quorum` | K-of-N consensus, early termination, Byzantine fault detection |
-| `tpt-mosaic-verify` | BLAKE3/SHA-256 hashing, ZK-ML proof stubs, `tpt-eve` hooks |
-| `tpt-mosaic-economy` | Micro-rewards, reputation, slashing — Solana / Base / NEAR |
-| `tpt-mosaic-node` | Main daemon binary: wires all subsystems, runs on every device |
+| [`tpt-mosaic-core`](crates/tpt-mosaic-core/README.md) | Shared types, traits, error enums (`no_std`) |
+| [`tpt-mosaic-proto`](crates/tpt-mosaic-proto/README.md) | FlatBuffers wire protocol, zero-copy serialization |
+| [`tpt-mosaic-discovery`](crates/tpt-mosaic-discovery/README.md) | BLE/UWB/Wi-Fi peer discovery, DHT, heartbeat |
+| [`tpt-mosaic-scheduler`](crates/tpt-mosaic-scheduler/README.md) | Quorum assembly, heterogeneous matching, straggler detection |
+| [`tpt-mosaic-task`](crates/tpt-mosaic-task/README.md) | Micro-task splitting (50–100 ms chunks), checkpoint/restore |
+| [`tpt-mosaic-compiler`](crates/tpt-mosaic-compiler/README.md) | Routes to `tpt-gpu` (CUDA/Metal/Vulkan) or `tpt-crucible` (NPU/DSP/CPU) |
+| [`tpt-mosaic-sandbox`](crates/tpt-mosaic-sandbox/README.md) | `tpt-archon` microkernel interface, RTOS preemption hooks |
+| [`tpt-mosaic-quorum`](crates/tpt-mosaic-quorum/README.md) | K-of-N consensus, early termination, Byzantine fault detection |
+| [`tpt-mosaic-verify`](crates/tpt-mosaic-verify/README.md) | BLAKE3/SHA-256 hashing, ZK-ML proof stubs, `tpt-eve` hooks |
+| [`tpt-mosaic-economy`](crates/tpt-mosaic-economy/README.md) | Micro-rewards, reputation, slashing — Solana / Base / NEAR |
+| [`tpt-mosaic-node`](crates/tpt-mosaic-node/README.md) | Main daemon binary: wires all subsystems, runs on every device |
+| [`tpt-mosaic-benches`](benches/README.md) | Criterion suite for the hot paths (not published) |
+
+Every crate ships its own README (install, features, API tour, testing) and
+CHANGELOG (Keep a Changelog format) alongside its manifest keywords and
+categories.
 
 ## Quorum Tiers
 
@@ -49,8 +54,8 @@ Edge Nodes (Tiles)              Anchor Nodes (Ballast)
 
 ## Networking Stack
 
-- **BLE / UWB** — control plane: peer discovery, heartbeat, capability advertisement
-- **Wi-Fi** — data plane: model shards, task payloads, result uploads
+- **BLE / UWB** — control plane: peer discovery, heartbeat, capability advertisement *(planned; the TCP mesh is the current v0 transport)*
+- **Wi-Fi** — data plane: model shards, task payloads, result uploads; mDNS zero-config LAN discovery (`mdns` feature)
 - **4G / 5G** — fallback: task assignments and cryptographic proofs only; raw weights never routed over cellular
 
 ## Quick Start
@@ -113,7 +118,9 @@ cargo clippy --workspace -- -D warnings
 cargo doc --workspace --no-deps
 ```
 
-See [todo.md](todo.md) for the full phased development checklist.
+See [todo.md](todo.md) for the full phased development checklist,
+[CHANGELOG.md](CHANGELOG.md) for release notes, and
+[CONTRIBUTING.md](CONTRIBUTING.md) for how to contribute.
 
 ## External Dependencies
 

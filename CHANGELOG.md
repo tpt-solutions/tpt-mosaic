@@ -6,10 +6,15 @@ All notable changes to tpt-mosaic are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Wi-Fi mDNS zero-config LAN discovery (`mdns` feature, `[mesh] mdns = true`):
+  nodes advertise under `_mosaic._udp.local.` and feed discovered addresses
+  into the beacon/gossip exchange.
+
 ### Planned
 
-- Networked transports beyond the TCP mesh: BLE / UWB control-plane beacons,
-  Wi-Fi mDNS peer detection.
+- Networked transports beyond the TCP mesh: BLE / UWB control-plane beacons.
 - Key-routed (Kademlia-style) DHT for wide-area indexing.
 - Real ZK-ML proof backend behind the existing `ZkProver` trait.
 - On-chain settlement adapters with live RPC (Solana / Base / NEAR).

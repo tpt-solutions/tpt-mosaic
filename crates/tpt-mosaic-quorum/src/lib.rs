@@ -2,7 +2,7 @@
 
 #![deny(missing_docs)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use tpt_mosaic_core::{MosaicError, NodeId, QuorumConfig, TaskId};
 use tpt_mosaic_proto::{CancellationReason, CancellationSignal};
 
@@ -42,6 +42,10 @@ pub struct HashCollector {
     votes: HashMap<[u8; 32], Vec<NodeId>>,
     /// Nodes flagged for consistently diverging hashes.
     suspected_byzantine: Vec<NodeId>,
+    /// Nodes that already voted — each node gets exactly one vote.
+    voted: HashSet<NodeId>,
+    /// When set, only these nodes may vote (the assembled quorum plus spares).
+    members: Option<HashSet<NodeId>>,
     state: QuorumState,
 }
 
@@ -56,13 +60,30 @@ impl HashCollector {
             config,
             votes: HashMap::new(),
             suspected_byzantine: Vec::new(),
+            voted: HashSet::new(),
+            members: None,
             state: QuorumState::Pending,
         })
     }
 
+    /// Restrict voting to `members`; votes from any other node are ignored.
+    pub fn with_members(mut self, members: impl IntoIterator<Item = NodeId>) -> Self {
+        self.members = Some(members.into_iter().collect());
+        self
+    }
+
     /// Record a hash submission from `node_id`. Returns the updated [`QuorumState`].
+    ///
+    /// Each node gets one vote: repeat submissions and (when
+    /// [`with_members`](Self::with_members) is set) votes from non-members are
+    /// ignored, so a single peer cannot forge a quorum.
     pub fn submit(&mut self, node_id: NodeId, hash: [u8; 32]) -> &QuorumState {
         if matches!(self.state, QuorumState::Finished(_)) {
+            return &self.state;
+        }
+        if self.members.as_ref().is_some_and(|m| !m.contains(&node_id))
+            || !self.voted.insert(node_id)
+        {
             return &self.state;
         }
         self.state = QuorumState::Collecting;
@@ -127,11 +148,16 @@ impl HashCollector {
             }
         }
 
-        // Check if it is now impossible to reach quorum (all votes cast but no winner).
+        // Diverged once the leading hash can no longer reach K even if every
+        // outstanding vote joined it.
         let total_votes: usize = self.votes.values().map(|v| v.len()).sum();
-        if total_votes >= self.config.n as usize {
-            // Flag nodes whose hash is in the minority as suspected Byzantine.
-            if let Some((winning_hash, _)) = self.votes.iter().max_by_key(|(_, v)| v.len()) {
+        let remaining = (self.config.n as usize).saturating_sub(total_votes);
+        let best = self.votes.values().map(|v| v.len()).max().unwrap_or(0);
+        if best + remaining < k {
+            // Flag nodes outside the leading hash as suspected Byzantine; the
+            // hash value breaks ties so the choice is deterministic.
+            if let Some((winning_hash, _)) = self.votes.iter().max_by_key(|(h, v)| (v.len(), **h))
+            {
                 for (hash, voters) in &self.votes {
                     if hash != winning_hash {
                         self.suspected_byzantine.extend_from_slice(voters);
@@ -180,6 +206,45 @@ mod tests {
         for i in 0..5u8 {
             c.submit(node(i), [i; 32]); // every node sends a unique hash
         }
+        assert!(matches!(
+            c.state(),
+            QuorumState::Finished(QuorumResult::Diverged)
+        ));
+    }
+
+    #[test]
+    fn duplicate_votes_from_one_node_are_ignored() {
+        let mut c = make_collector();
+        for _ in 0..5 {
+            c.submit(node(1), [9u8; 32]);
+        }
+        assert!(matches!(c.state(), QuorumState::Collecting));
+    }
+
+    #[test]
+    fn non_members_cannot_vote() {
+        let mut c = make_collector().with_members([node(1), node(2), node(3)]);
+        c.submit(node(7), [1u8; 32]);
+        c.submit(node(8), [1u8; 32]);
+        let state = c.submit(node(9), [1u8; 32]).clone();
+        assert_eq!(state, QuorumState::Pending);
+        c.submit(node(1), [1u8; 32]);
+        c.submit(node(2), [1u8; 32]);
+        assert!(matches!(
+            c.submit(node(3), [1u8; 32]),
+            QuorumState::Finished(QuorumResult::Met { .. })
+        ));
+    }
+
+    #[test]
+    fn diverges_early_when_quorum_unreachable() {
+        let mut c = make_collector();
+        c.submit(node(1), [1u8; 32]);
+        c.submit(node(2), [2u8; 32]);
+        c.submit(node(3), [3u8; 32]);
+        // Best = 1, two votes outstanding: still reachable only if both agree.
+        assert!(matches!(c.state(), QuorumState::Collecting));
+        c.submit(node(4), [4u8; 32]);
         assert!(matches!(
             c.state(),
             QuorumState::Finished(QuorumResult::Diverged)
@@ -252,7 +317,9 @@ mod tests {
             k in 1u8..4,
             extra in 0u8..6,
         ) {
-            let config = QuorumConfig::new(k, k.saturating_add(extra), TierLevel::BestEffort);
+            // Keep k a strict majority of n (`2k > n`), as `is_valid` requires.
+            let extra = extra % k;
+            let config = QuorumConfig::new(k, k + extra, TierLevel::BestEffort);
             let mut c = HashCollector::new(TaskId::NIL, config).unwrap();
             for (node_id, hash) in &votes {
                 let state = c.submit(node(*node_id), [*hash; 32]);

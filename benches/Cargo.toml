@@ -3,11 +3,15 @@ name        = "tpt-mosaic-benches"
 version     = "0.1.0"
 publish     = false
 description = "Criterion benchmarks for tpt-mosaic hot paths"
+readme = "README.md"
+keywords = ["mosaic", "benchmark", "criterion", "performance"]
+categories = ["development-tools::profiling", "development-tools::testing"]
 authors.workspace    = true
 license.workspace    = true
 edition.workspace    = true
 rust-version.workspace = true
-repository.workspace = true
+repository.workspace  = true
+homepage.workspace   = true
 
 [dev-dependencies]
 criterion           = { workspace = true }

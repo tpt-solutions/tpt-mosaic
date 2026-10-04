@@ -2,11 +2,16 @@
 name        = "tpt-mosaic-economy"
 version     = "0.1.0"
 description = "Incentive layer: micro-rewards, reputation, slashing, and on-chain settlement (Solana, Base, NEAR)"
+readme = "README.md"
+keywords = ["mosaic", "incentives", "reputation", "slashing", "settlement"]
+categories = ["economics", "algorithms", "api-bindings", "network-programming"]
 authors.workspace    = true
 license.workspace    = true
 edition.workspace    = true
 rust-version.workspace = true
-repository.workspace = true
+repository.workspace  = true
+homepage.workspace   = true
+documentation = "https://docs.rs/tpt-mosaic-economy"
 
 [features]
 default    = []

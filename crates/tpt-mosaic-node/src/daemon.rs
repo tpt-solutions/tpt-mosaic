@@ -433,7 +433,9 @@ impl NodeDaemon {
             CapabilityFlags::empty(),
         )?;
 
-        let mut collector = HashCollector::new(task_id, quorum)?;
+        // Only assembled candidates (quorum members and spares) may vote.
+        let mut collector = HashCollector::new(task_id, quorum)?
+            .with_members(candidates.iter().map(|p| p.node_id));
         let mut got: u32 = 0;
         let mut replied: Vec<NodeId> = Vec::new();
         // Every node splits the same payload deterministically, so the shard
@@ -523,9 +525,12 @@ impl NodeDaemon {
             let mut missing: Vec<NodeId> = Vec::new();
             for ((node, _), handle) in pending.drain(..).zip(handles) {
                 match handle.join() {
-                    Ok(Some(rh)) => {
-                        collector.submit(rh.node_id, rh.hash);
-                        replied.push(rh.node_id);
+                    // A reply only counts if it answers this task and comes
+                    // from the node that was dialed; anything else is a
+                    // spoofed or stale vote and the node counts as missing.
+                    Ok(Some(rh)) if rh.task_id == task_id && rh.node_id == node => {
+                        collector.submit(node, rh.hash);
+                        replied.push(node);
                         got += 1;
                         tracker.complete(node);
                     }

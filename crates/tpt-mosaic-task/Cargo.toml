@@ -2,11 +2,16 @@
 name        = "tpt-mosaic-task"
 version     = "0.1.0"
 description = "Workload definition, micro-task sharding, checkpoint/restore, and lifecycle management"
+readme = "README.md"
+keywords = ["mosaic", "sharding", "checkpoint", "task-queue", "scheduling"]
+categories = ["data-structures", "algorithms", "filesystem", "concurrency"]
 authors.workspace    = true
 license.workspace    = true
 edition.workspace    = true
 rust-version.workspace = true
-repository.workspace = true
+repository.workspace  = true
+homepage.workspace   = true
+documentation = "https://docs.rs/tpt-mosaic-task"
 
 [dependencies]
 tpt-mosaic-core  = { workspace = true, features = ["std"] }

@@ -2,11 +2,16 @@
 name        = "tpt-mosaic-node"
 version     = "0.1.0"
 description = "tpt-mosaic node daemon — entry point that wires all subsystems and runs on every device"
+readme = "README.md"
+keywords = ["mosaic", "daemon", "distributed-compute", "p2p", "edge"]
+categories = ["command-line-utilities", "network-programming", "asynchronous", "hardware-support"]
 authors.workspace    = true
 license.workspace    = true
 edition.workspace    = true
 rust-version.workspace = true
-repository.workspace = true
+repository.workspace  = true
+homepage.workspace   = true
+documentation = "https://docs.rs/tpt-mosaic-node"
 
 [[bin]]
 name = "tpt-mosaic-node"

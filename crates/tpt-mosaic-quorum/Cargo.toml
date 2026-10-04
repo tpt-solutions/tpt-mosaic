@@ -2,11 +2,16 @@
 name        = "tpt-mosaic-quorum"
 version     = "0.1.0"
 description = "K-of-N consensus validation, hash collection, early termination, and Byzantine fault detection"
+readme = "README.md"
+keywords = ["mosaic", "consensus", "quorum", "byzantine", "verification"]
+categories = ["algorithms", "cryptography", "concurrency", "data-structures"]
 authors.workspace    = true
 license.workspace    = true
 edition.workspace    = true
 rust-version.workspace = true
-repository.workspace = true
+repository.workspace  = true
+homepage.workspace   = true
+documentation = "https://docs.rs/tpt-mosaic-quorum"
 
 [dependencies]
 tpt-mosaic-core  = { workspace = true, features = ["std"] }

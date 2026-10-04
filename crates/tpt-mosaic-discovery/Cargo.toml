@@ -2,11 +2,16 @@
 name        = "tpt-mosaic-discovery"
 version     = "0.1.0"
 description = "Peer discovery and network topology management for tpt-mosaic (BLE/UWB/Wi-Fi, DHT, heartbeat)"
+readme = "README.md"
+keywords = ["mosaic", "discovery", "p2p", "mesh", "mdns"]
+categories = ["network-programming", "asynchronous", "api-bindings", "hardware-support"]
 authors.workspace    = true
 license.workspace    = true
 edition.workspace    = true
 rust-version.workspace = true
-repository.workspace = true
+repository.workspace  = true
+homepage.workspace   = true
+documentation = "https://docs.rs/tpt-mosaic-discovery"
 
 [features]
 # LAN zero-config discovery via mDNS (mdns-sd; no system daemon required).

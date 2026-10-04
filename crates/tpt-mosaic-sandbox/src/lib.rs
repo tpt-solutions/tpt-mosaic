@@ -155,7 +155,7 @@ mod archon {
         full_page_bytes: usize,
         last_page_bytes: usize,
         output: Rc<RefCell<Vec<u8>>>,
-        violation: Cell<bool>,
+        violation: Rc<Cell<bool>>,
     }
 
     impl Task for ConfinedReadback {
@@ -233,7 +233,8 @@ mod archon {
         // single poll and cannot outlive it.
         let (caps, lens): (Vec<_>, Vec<_>) = pages.into_iter().unzip();
         let output = Rc::new(RefCell::new(Vec::with_capacity(workload.len())));
-        let violation = Cell::new(false);
+        // Shared with the task: `Cell::clone` would copy the flag instead.
+        let violation = Rc::new(Cell::new(false));
         let mut scheduler = Scheduler::new();
         scheduler.spawn(Box::new(ConfinedReadback {
             mem,
@@ -241,7 +242,7 @@ mod archon {
             full_page_bytes: PAGE_SIZE,
             last_page_bytes: *lens.last().expect("non-empty workload"),
             output: output.clone(),
-            violation: violation.clone(),
+            violation: Rc::clone(&violation),
         }));
         scheduler.run_to_completion();
 

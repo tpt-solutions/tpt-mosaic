@@ -8,6 +8,7 @@ in-tree; unchecked items are pending. Stubbed integration points are marked.
 - [x] Cargo workspace with 11 crates, shared profiles, pinned toolchain (rustfmt + clippy)
 - [x] CI: fmt, clippy `-D warnings`, tests on Linux/macOS/Windows, release build, docs `-D warnings`
 - [x] MIT OR Apache-2.0 dual licensing, README, design spec
+- [x] CONTRIBUTING.md, CHANGELOG.md, CI status badge, tracked `Cargo.lock`
 
 ## Phase 1 — `tpt-mosaic-core`
 
@@ -120,3 +121,55 @@ in-tree; unchecked items are pending. Stubbed integration points are marked.
 - [ ] `no_std` feature-combination matrix (`cargo-hack`) in CI
 - [x] v0.1.0 CHANGELOG
 - [ ] crates.io publish — blocked on the upstream tpt-* crates publishing first (Cargo rejects git dependencies in published packages; confirmed via `cargo package --dry-run`)
+
+## Phase 13 — Correctness & security fixes (from platform review)
+
+Done in working tree (untested — `cargo test` not yet run):
+- [x] `HashCollector`: one vote per node, optional member allow-list, early divergence, deterministic tie-break
+- [x] `QuorumConfig::is_valid` requires strict majority (`2k > n`)
+- [x] Daemon rejects `ResultHash` replies with wrong `task_id` / `node_id`; only assembled candidates may vote
+- [x] Sandbox violation flag shared via `Rc<Cell<bool>>` (was copied, never observed)
+
+Open:
+- [ ] Run full test suite / clippy for the changes above
+- [ ] Checkpoint resume must hash the full output; key checkpoints by task id + nonce; log write failures
+- [ ] Mesh server hardening: connection cap, overall frame deadline, no 16 MiB pre-allocation, survive transient `accept` errors
+- [ ] Honour `deadline_ms` + `CancellationSignal` on workers; apply `HashCollector::timeout()` in `run_network_task`
+- [ ] Control API: cap line length, run `SUBMIT` via `spawn_blocking`
+- [ ] Heartbeat: parallel/short-timeout beacon exchange, cap peer table, validate gossiped addrs
+- [ ] Pay workers (not only coordinator); wire reputation into assembler + `finish_task`; persist reputation and ledger
+- [ ] Replace poisoned-mutex `expect`s, saturating ledger arithmetic, CSPRNG ids, 0600 identity file
+- [ ] Compiler cache: integrity hash, feature set in fingerprint, unique tmp names, size cap
+- [ ] Node identity: ed25519 keys, `NodeId = hash(pubkey)`, signed beacons/assignments/results, nonce + timestamp replay protection
+- [ ] Align README/todo with reality (sandbox echo-only, in-memory ledger, hand-rolled codec, mesh-directory "DHT", unenforced cellular guard)
+
+## Phase 14 — Adoption & usability
+
+- [ ] `examples/`: `hello_quorum`, `two_node_mesh`, `submit_job`, `custom_executor`, `byzantine_demo`
+- [ ] `Dockerfile` + `docker-compose.yml` 5-node mesh; sample configs (`hub.toml`, `edge.toml`, `anchor.toml`); `just`/`xtask` shortcuts
+- [ ] README Quick Start rewrite (prereqs/MSRV, `cargo install`, two-node demo, expected output, GIF)
+- [ ] `clap` CLI: `--version`, `--check-config`, `init`, `status`, `peers`, `submit`, `result`, `cancel`; `MOSAIC_*` env overrides; config search path; config errors with field/line
+- [ ] Service packaging (systemd, launchd, Windows) + `cargo-dist` release workflow
+- [ ] Repo hygiene: `SECURITY.md`, issue/PR templates, `CODE_OF_CONDUCT.md`, `dependabot.yml`, `deny.toml` + audit job, MSRV job, coverage job, `.kilo/` in `.gitignore`
+- [ ] crates.io readiness: READMEs for compiler/economy/node/quorum/sandbox/verify/benches, commit untracked READMEs/CHANGELOGs, `version` on path deps, `docs.rs` metadata, `exclude` list, doctests
+- [ ] Black-box tests (`assert_cmd`) for the real node binary; `cargo-fuzz` for proto decoder
+
+## Phase 15 — Observability & APIs
+
+- [ ] `/metrics` (Prometheus), `/healthz`, JSON logs, OpenTelemetry spans
+- [ ] `mosaic top` TUI or web dashboard
+- [ ] Hardware/thermal/battery auto-detection
+- [ ] Config hot-reload + JSON schema for `node.toml`
+- [ ] Job lifecycle API (HTTP/gRPC with auth) + `tpt-mosaic-client` SDK crate
+- [ ] release-plz, nightly compose soak test, mdBook docs site
+
+## Phase 16 — Innovation backlog
+
+- [ ] Reputation-weighted adaptive quorum + canary tasks
+- [ ] Optimistic execution with random re-audit and fraud-proof slashing
+- [ ] NAT traversal (STUN/hole punching/relay) + Kademlia DHT
+- [ ] Deterministic WASM workload runtime with fuel metering
+- [ ] Job templates (`mosaic submit --template ...`)
+- [ ] Real Solana/Base/NEAR settlement + "no-chain" signed-receipt mode
+- [ ] Deterministic network simulator with fault injection
+- [ ] Energy/carbon-aware scheduling

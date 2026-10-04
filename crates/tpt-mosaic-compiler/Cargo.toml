@@ -2,11 +2,16 @@
 name        = "tpt-mosaic-compiler"
 version     = "0.1.0"
 description = "Hardware-aware compilation dispatch: routes workloads to tpt-gpu or tpt-crucible"
+readme = "README.md"
+keywords = ["mosaic", "compiler", "dispatch", "jit-cache", "heterogeneous"]
+categories = ["compilers", "hardware-support", "api-bindings", "caching"]
 authors.workspace    = true
 license.workspace    = true
 edition.workspace    = true
 rust-version.workspace = true
-repository.workspace = true
+repository.workspace  = true
+homepage.workspace   = true
+documentation = "https://docs.rs/tpt-mosaic-compiler"
 
 [features]
 default  = []

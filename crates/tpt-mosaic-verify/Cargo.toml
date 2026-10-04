@@ -2,11 +2,16 @@
 name        = "tpt-mosaic-verify"
 version     = "0.1.0"
 description = "Cryptographic output hashing (BLAKE3/SHA-256), ZK-ML proof stubs, and tpt-eve consistency hooks"
+readme = "README.md"
+keywords = ["mosaic", "hashing", "blake3", "verification", "zkml"]
+categories = ["cryptography", "algorithms", "no-std", "api-bindings"]
 authors.workspace    = true
 license.workspace    = true
 edition.workspace    = true
 rust-version.workspace = true
-repository.workspace = true
+repository.workspace  = true
+homepage.workspace   = true
+documentation = "https://docs.rs/tpt-mosaic-verify"
 
 [features]
 default = []

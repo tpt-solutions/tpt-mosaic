@@ -2,11 +2,16 @@
 name        = "tpt-mosaic-proto"
 version     = "0.1.0"
 description = "FlatBuffers wire protocol and zero-copy serialization for tpt-mosaic inter-node communication"
+readme = "README.md"
+keywords = ["mosaic", "protocol", "serialization", "wire-format", "flatbuffers"]
+categories = ["network-programming", "encoding", "data-structures", "no-std"]
 authors.workspace    = true
 license.workspace    = true
 edition.workspace    = true
 rust-version.workspace = true
-repository.workspace = true
+repository.workspace  = true
+homepage.workspace   = true
+documentation = "https://docs.rs/tpt-mosaic-proto"
 
 [features]
 default = []

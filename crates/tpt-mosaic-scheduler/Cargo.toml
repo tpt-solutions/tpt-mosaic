@@ -2,11 +2,16 @@
 name        = "tpt-mosaic-scheduler"
 version     = "0.1.0"
 description = "Quorum assembly, heterogeneous hardware matching, and task routing for tpt-mosaic"
+readme = "README.md"
+keywords = ["mosaic", "scheduler", "quorum", "heterogeneous", "straggler"]
+categories = ["algorithms", "concurrency", "data-structures", "hardware-support"]
 authors.workspace    = true
 license.workspace    = true
 edition.workspace    = true
 rust-version.workspace = true
-repository.workspace = true
+repository.workspace  = true
+homepage.workspace   = true
+documentation = "https://docs.rs/tpt-mosaic-scheduler"
 
 [dependencies]
 tpt-mosaic-core      = { workspace = true, features = ["std"] }
