@@ -7,6 +7,15 @@ in the root [CHANGELOG.md](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+### Changed
+
+- Mesh server: concurrent-connection cap (64), a 60 s wall-clock budget
+  per inbound connection enforced across every socket read, and transient
+  `accept` errors no longer stop the accept loop.
+- `PeerTable` is capped at 512 entries; inserts beyond the cap evict the
+  least-recently-seen record instead of growing without bound.
+- Shared tables use poison-tolerant locking.
+
 ### Added
 
 - Wi-Fi mDNS zero-config LAN discovery behind the `mdns` feature: nodes

@@ -23,6 +23,11 @@ use tpt_mosaic_core::QuorumConfig;
 use crate::daemon::NodeDaemon;
 use crate::id;
 
+/// Upper bound on one control command in bytes. A hex payload for SUBMIT is
+/// double its binary size, so this still admits every payload the mesh could
+/// carry (16 MiB binary) while a client cannot force unbounded buffering.
+const MAX_COMMAND_BYTES: usize = 16 * 1024 * 1024;
+
 /// Accept connections until shutdown is signalled.
 pub(crate) async fn serve(
     daemon: Arc<NodeDaemon>,
@@ -48,19 +53,79 @@ pub(crate) async fn serve(
 
 async fn handle_connection(daemon: Arc<NodeDaemon>, stream: tokio::net::TcpStream) {
     let (reader, mut writer) = stream.into_split();
-    let mut lines = BufReader::new(reader).lines();
-    while let Ok(Some(line)) = lines.next_line().await {
+    let mut reader = BufReader::new(reader);
+    loop {
+        let line = match next_line_capped(&mut reader, MAX_COMMAND_BYTES).await {
+            Ok(Some(line)) => line,
+            Ok(None) => break,
+            Err(ControlReadError::Oversize) => {
+                let _ = writer.write_all(b"ERR command too long\n").await;
+                break;
+            }
+            Err(ControlReadError::Io(e)) => {
+                tracing::debug!(error = %e, "control connection read failed");
+                break;
+            }
+        };
         let trimmed = line.trim();
         if trimmed.is_empty() {
             continue;
         }
-        let response = handle_command(&daemon, trimmed);
+        // SUBMIT runs a whole task round (local execution or a mesh quorum)
+        // and can block for seconds: offload it so the async runtime's
+        // worker threads stay free.
+        let response = if trimmed.starts_with("SUBMIT") {
+            let daemon = daemon.clone();
+            let command = trimmed.to_owned();
+            tokio::task::spawn_blocking(move || handle_command(&daemon, &command))
+                .await
+                .unwrap_or_else(|e| format!("ERR submit worker failed: {e}"))
+        } else {
+            handle_command(&daemon, trimmed)
+        };
         if writer
             .write_all(format!("{response}\n").as_bytes())
             .await
             .is_err()
         {
             break;
+        }
+    }
+}
+
+enum ControlReadError {
+    /// The peer sent more than the command cap without a newline.
+    Oversize,
+    Io(std::io::Error),
+}
+
+/// Read one newline-terminated line, giving up once `max` bytes have been
+/// buffered (unlike [`AsyncBufReadExt::read_line`], which grows forever).
+async fn next_line_capped(
+    reader: &mut BufReader<tokio::net::tcp::OwnedReadHalf>,
+    max: usize,
+) -> Result<Option<String>, ControlReadError> {
+    let mut line = Vec::new();
+    loop {
+        let available = reader.fill_buf().await.map_err(ControlReadError::Io)?;
+        if available.is_empty() {
+            // EOF: a final unterminated fragment is not a command.
+            return Ok(None);
+        }
+        match available.iter().position(|&b| b == b'\n') {
+            Some(i) => {
+                line.extend_from_slice(&available[..i]);
+                reader.consume(i + 1);
+                return Ok(Some(String::from_utf8_lossy(&line).into_owned()));
+            }
+            None => {
+                let n = available.len();
+                line.extend_from_slice(available);
+                reader.consume(n);
+                if line.len() > max {
+                    return Err(ControlReadError::Oversize);
+                }
+            }
         }
     }
 }

@@ -6,9 +6,15 @@ use std::time::Duration;
 use crate::PeerRecord;
 use tpt_mosaic_core::NodeId;
 
+/// Upper bound on table entries. An insert beyond the cap evicts the
+/// least-recently-seen record, so gossip floods cannot grow the table
+/// without bound.
+const MAX_PEERS: usize = 512;
+
 /// Thread-safe in-memory registry of live peers.
 ///
-/// Records are evicted when they exceed `max_age` without a refresh.
+/// Records are evicted when they exceed `max_age` without a refresh, and the
+/// table never holds more than 512 entries.
 #[derive(Debug, Default)]
 pub struct PeerTable {
     records: HashMap<NodeId, PeerRecord>,
@@ -25,7 +31,20 @@ impl PeerTable {
     }
 
     /// Insert or refresh a peer record.
+    ///
+    /// Refreshing an existing record never evicts anything; a new record
+    /// beyond the 512-entry cap replaces the stalest entry instead.
     pub fn upsert(&mut self, record: PeerRecord) {
+        if !self.records.contains_key(&record.node_id) && self.records.len() >= MAX_PEERS {
+            let stalest = self
+                .records
+                .values()
+                .min_by_key(|r| r.last_seen)
+                .map(|r| r.node_id);
+            if let Some(id) = stalest {
+                self.records.remove(&id);
+            }
+        }
         self.records.insert(record.node_id, record);
     }
 
@@ -102,5 +121,37 @@ mod tests {
         let evicted = table.evict_stale();
         assert_eq!(evicted, 1);
         assert!(table.is_empty());
+    }
+
+    #[test]
+    fn table_is_capped_and_evicts_the_stalest() {
+        fn record_with_index(i: usize) -> PeerRecord {
+            let mut bytes = [0u8; 16];
+            bytes[0] = i as u8;
+            bytes[1] = (i >> 8) as u8;
+            make_record(bytes)
+        }
+
+        let mut table = PeerTable::new(Duration::from_secs(30));
+        // An explicitly stale record first, then fill the table to the cap.
+        let mut oldest = record_with_index(0);
+        oldest.last_seen = Instant::now() - Duration::from_secs(1);
+        table.upsert(oldest);
+        for i in 1..MAX_PEERS {
+            table.upsert(record_with_index(i));
+        }
+        assert_eq!(table.len(), MAX_PEERS);
+
+        // One insert beyond the cap evicts the stalest entry.
+        let newcomer = record_with_index(MAX_PEERS);
+        table.upsert(newcomer.clone());
+        assert_eq!(table.len(), MAX_PEERS);
+        assert!(table.get(&record_with_index(0).node_id).is_none());
+        assert!(table.get(&newcomer.node_id).is_some());
+
+        // Refreshing an existing record at the cap evicts nothing.
+        table.upsert(record_with_index(5));
+        assert_eq!(table.len(), MAX_PEERS);
+        assert!(table.get(&record_with_index(5).node_id).is_some());
     }
 }

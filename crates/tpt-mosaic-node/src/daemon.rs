@@ -7,6 +7,7 @@
 //! quorums: assemble → dispatch `TaskAssignment` → collect `ResultHash` →
 //! broadcast cancellation (spec §3.3, §8).
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::net::{SocketAddr, TcpListener};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -53,6 +54,19 @@ const MESH_RPC_TIMEOUT: Duration = Duration::from_secs(30);
 /// Per-wave budget for one task-assignment dispatch; a member that misses it
 /// is a straggler and gets replaced from the spare pool (spec §3.3).
 const MESH_DISPATCH_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Per-peer budget for one beacon exchange. Heartbeats dispatch every peer
+/// in parallel, so a full round stays near this bound even when several
+/// peers are dead.
+const BEACON_EXCHANGE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long a task cancellation notice is honoured: late or reordered
+/// assignments for a cancelled task are refused until this expires.
+const CANCELLATION_TTL: Duration = Duration::from_secs(300);
+
+/// Upper bound on remembered cancellations, keeping the map bounded no
+/// matter how many distinct tasks are cancelled.
+const MAX_CANCELLED_TASKS: usize = 1024;
 
 /// Cumulative daemon counters.
 #[derive(Debug, Default)]
@@ -127,6 +141,10 @@ pub struct NodeDaemon {
     reputation: Arc<Mutex<ReputationStore>>,
     settlement: Arc<dyn Settlement>,
     stats: Arc<Stats>,
+    /// Tasks this node has been told to cancel, with the time of the notice.
+    cancelled: Mutex<HashMap<TaskId, Instant>>,
+    /// When set, peer reputation scores are loaded from and saved to this file.
+    reputation_file: Option<std::path::PathBuf>,
 }
 
 /// Keeps the mesh accept-loop alive; stops it on drop.
@@ -195,7 +213,25 @@ impl NodeDaemon {
             },
             _ => None,
         };
-        let settlement = make_settlement(config.chain, config.rpc_url.as_deref());
+        let settlement = make_settlement(
+            config.chain,
+            config.rpc_url.as_deref(),
+            config.economy_state_file.as_deref(),
+        );
+        let reputation_path = config.reputation_file.clone();
+        let reputation = match &reputation_path {
+            Some(path) => match ReputationStore::load(path) {
+                Ok(store) => {
+                    tracing::info!(path = %path.display(), nodes = store.len(), "reputation restored");
+                    store
+                }
+                Err(e) => {
+                    tracing::warn!(path = %path.display(), error = %e, "reputation file unreadable; starting empty");
+                    ReputationStore::new()
+                }
+            },
+            None => ReputationStore::new(),
+        };
         Self {
             config,
             self_id,
@@ -207,9 +243,11 @@ impl NodeDaemon {
             mdns,
             broadcaster: TracingBroadcaster,
             sandbox: Sandbox::new(ThermalPolicy::default()),
-            reputation: Arc::new(Mutex::new(ReputationStore::new())),
+            reputation: Arc::new(Mutex::new(reputation)),
             settlement,
             stats: Arc::new(Stats::default()),
+            cancelled: Mutex::new(HashMap::new()),
+            reputation_file: reputation_path,
         }
     }
 
@@ -223,11 +261,7 @@ impl NodeDaemon {
 
     /// Start serving mesh connections until the returned guard is dropped.
     pub fn start_mesh(self: &Arc<Self>) -> Option<MeshGuard> {
-        let listener = self
-            .mesh_listener
-            .lock()
-            .expect("mesh listener poisoned")
-            .take()?;
+        let listener = lock_ok(&self.mesh_listener).take()?;
         let running = Arc::new(AtomicBool::new(true));
         let handler: FrameHandler = {
             let daemon = Arc::clone(self);
@@ -254,10 +288,24 @@ impl NodeDaemon {
     pub fn peer_ids(&self) -> Vec<NodeId> {
         self.peers
             .lock()
-            .expect("peer table poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .live_peers()
             .map(|p| p.node_id)
             .collect()
+    }
+
+    /// Balance this node's settlement ledger currently credits to `node_id`.
+    // Used by the mesh integration tests; will back the Phase-15 status API.
+    #[allow(dead_code)]
+    pub fn balance_of(&self, node_id: NodeId) -> u64 {
+        self.settlement.balance(node_id).unwrap_or(0)
+    }
+
+    /// Reputation score this node currently assigns to `node_id`.
+    // Used by the mesh integration tests; will back the Phase-15 status API.
+    #[allow(dead_code)]
+    pub fn reputation_of(&self, node_id: NodeId) -> f32 {
+        lock_ok(&self.reputation).score(node_id)
     }
 
     /// Snapshot of the daemon counters.
@@ -301,34 +349,43 @@ impl NodeDaemon {
         task_id: TaskId,
         payload: &[u8],
     ) -> Result<([u8; 32], u32), MosaicError> {
+        let task_hex = id::to_hex(task_id.as_bytes());
         let shards = split_task(task_id, payload, TaskPriority::Standard, SHARD_TARGET_BYTES)?;
         let grant = CapabilityGrant::new(task_id, GRANT_MAX_MEMORY_BYTES, GRANT_MAX_CPU_MS);
 
-        // Resume cursor: keyed by the (payload, hardware) fingerprint, so a
-        // resubmitted identical task continues where an interrupted one
-        // stopped. The checkpoint is removed once every shard has completed.
+        // Checkpoints are keyed by the task id (unique per submission), with
+        // the (payload, hardware) fingerprint as a nonce binding the file to
+        // this exact workload — two tasks can never share or clobber each
+        // other's resume state. The blob carries the output produced so far,
+        // so a resumed run hashes the full output and votes the same digest
+        // as an uninterrupted run.
         let cp_path = self.checkpoints.as_ref().map(|dir| {
             dir.join(format!(
-                "{}.cp",
+                "{}-{}.cp",
+                id::to_hex(task_id.as_bytes()),
                 id::to_hex(&compiler::fingerprint(payload, &self.config.hardware))
             ))
         });
-        let mut progress = match &cp_path {
-            Some(path) => restore_checkpoint(path)
-                .ok()
-                .and_then(|cp| TaskProgress::from_checkpoint(&cp, shards.len() as u32).ok())
-                .unwrap_or_else(|| TaskProgress::new(task_id, shards.len() as u32)),
-            None => TaskProgress::new(task_id, shards.len() as u32),
+        let fresh = || TaskProgress::new(task_id, shards.len() as u32);
+        let (mut progress, mut output) = match cp_path.as_deref().map(restore_checkpoint) {
+            Some(Ok(cp)) if cp.task_id == task_id => {
+                match TaskProgress::from_checkpoint(&cp, shards.len() as u32) {
+                    Ok(progress) => {
+                        if progress.completed() > 0 {
+                            tracing::info!(
+                                task = %task_hex,
+                                resumed_at = progress.completed(),
+                                "resuming interrupted task from checkpoint"
+                            );
+                        }
+                        (progress, cp.state_blob)
+                    }
+                    Err(_) => (fresh(), Vec::new()),
+                }
+            }
+            _ => (fresh(), Vec::new()),
         };
-        if progress.completed() > 0 {
-            tracing::info!(
-                task = %id::to_hex(task_id.as_bytes()),
-                resumed_at = progress.completed(),
-                "resuming interrupted task from checkpoint"
-            );
-        }
 
-        let mut output = Vec::with_capacity(payload.len());
         for shard in &shards[progress.completed() as usize..] {
             let compiled = match &self.jit {
                 Some(cache) => cache.compile_cached(&shard.payload, &self.config.hardware)?,
@@ -338,11 +395,19 @@ impl NodeDaemon {
             output.extend_from_slice(&produced);
             progress.advance();
             if let Some(path) = &cp_path {
-                let _ = save_checkpoint(path, &progress.checkpoint(Vec::new()));
+                if let Err(e) = save_checkpoint(path, &progress.checkpoint(output.clone())) {
+                    tracing::warn!(task = %task_hex, error = %e, "checkpoint write failed");
+                }
             }
         }
         if let Some(path) = &cp_path {
-            let _ = std::fs::remove_file(path);
+            match std::fs::remove_file(path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => {
+                    tracing::warn!(task = %task_hex, error = %e, "checkpoint cleanup failed")
+                }
+            }
         }
         Ok((
             hash_output(&output, HashAlgorithm::Blake3),
@@ -367,14 +432,30 @@ impl NodeDaemon {
                 confirmations,
             }) => {
                 let reward = calculate_reward(&quorum, self.config.capabilities, shards);
-                self.settlement
-                    .submit_reward(self.self_id, reward, &task_hex)?;
-                self.reputation
-                    .lock()
-                    .expect("reputation poisoned")
-                    .record_success(self.self_id);
+                // Pay every contributor that voted for the winning hash —
+                // the coordinator is just one member of the quorum.
+                let voters: Vec<NodeId> = collector.voters_for(agreed_hash).to_vec();
+                for voter in &voters {
+                    self.settlement.submit_reward(*voter, reward, &task_hex)?;
+                }
+                {
+                    let mut reputation = lock_ok(&self.reputation);
+                    for voter in &voters {
+                        reputation.record_success(*voter);
+                    }
+                    for suspect in collector.suspected_byzantine() {
+                        reputation.record_failure(*suspect);
+                    }
+                }
+                self.persist_reputation();
                 self.stats.tasks_completed.fetch_add(1, Ordering::Relaxed);
-                tracing::info!(task = %task_hex, confirmations, reward, "quorum met");
+                tracing::info!(
+                    task = %task_hex,
+                    confirmations,
+                    reward,
+                    paid = voters.len(),
+                    "quorum met"
+                );
                 Ok(TaskReceipt {
                     task_id,
                     agreed_hash: *agreed_hash,
@@ -384,10 +465,8 @@ impl NodeDaemon {
                 })
             }
             _ => {
-                self.reputation
-                    .lock()
-                    .expect("reputation poisoned")
-                    .record_failure(self.self_id);
+                lock_ok(&self.reputation).record_failure(self.self_id);
+                self.persist_reputation();
                 self.stats.tasks_failed.fetch_add(1, Ordering::Relaxed);
                 tracing::warn!(task = %task_hex, required = quorum.k, got, "quorum not met");
                 Err(MosaicError::QuorumNotMet {
@@ -395,6 +474,16 @@ impl NodeDaemon {
                     got: got.min(u8::MAX as u32) as u8,
                     required: quorum.k,
                 })
+            }
+        }
+    }
+
+    /// Best-effort persistence of the reputation store when
+    /// `[economy] reputation_file` is configured.
+    fn persist_reputation(&self) {
+        if let Some(path) = &self.reputation_file {
+            if let Err(e) = lock_ok(&self.reputation).save(path) {
+                tracing::warn!(path = %path.display(), error = %e, "reputation persistence failed");
             }
         }
     }
@@ -423,19 +512,30 @@ impl NodeDaemon {
         let candidates: Vec<PeerRecord> = self
             .peers
             .lock()
-            .expect("peer table poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .live_peers()
             .cloned()
             .collect();
+        // Peers slashed below the reputation threshold are excluded from
+        // assembly (the coordinator always keeps its own slot: it must stay
+        // able to contribute its vote).
+        let candidates: Vec<PeerRecord> = {
+            let reputation = lock_ok(&self.reputation);
+            candidates
+                .into_iter()
+                .filter(|p| p.node_id == self.self_id || !reputation.should_slash(p.node_id))
+                .collect()
+        };
         let selected = BalancedAssembler::default().assemble(
             &candidates,
             &quorum,
             CapabilityFlags::empty(),
+            &|id| lock_ok(&self.reputation).score(id),
         )?;
 
         // Only assembled candidates (quorum members and spares) may vote.
-        let mut collector = HashCollector::new(task_id, quorum)?
-            .with_members(candidates.iter().map(|p| p.node_id));
+        let mut collector =
+            HashCollector::new(task_id, quorum)?.with_members(candidates.iter().map(|p| p.node_id));
         let mut got: u32 = 0;
         let mut replied: Vec<NodeId> = Vec::new();
         // Every node splits the same payload deterministically, so the shard
@@ -452,7 +552,7 @@ impl NodeDaemon {
         // Dispatch targets: quorum members first, then spare candidates for
         // straggler replacement (spec §3.3/§6.4: a missing member is replaced
         // 1:1 while total contributors stay within the quorum's n).
-        let peers = self.peers.lock().expect("peer table poisoned");
+        let peers = lock_ok(&self.peers);
         let mut pending: Vec<(NodeId, SocketAddr)> = selected
             .iter()
             .filter(|node| **node != self.self_id)
@@ -578,17 +678,20 @@ impl NodeDaemon {
 
         let outcome = self.finish_task(task_id, quorum, &collector, got, shards);
 
-        // Early termination (spec §3.3): once the quorum is met, tell any
-        // dispatched worker that had not contributed to stop. Fire-and-forget.
+        // Early termination (spec §3.3) and timeout teardown: every
+        // dispatched worker that had not contributed is told to stop —
+        // `QuorumMet` when the threshold was reached, `Timeout` when the
+        // round failed without a diverged vote (a diverged round has every
+        // member voted already, so there is nothing left to cancel).
+        // Fire-and-forget.
         if outcome.is_ok() {
-            let cancellation =
-                WireMessage::CancellationSignal(tpt_mosaic_proto::CancellationSignal {
-                    task_id,
-                    reason: tpt_mosaic_proto::CancellationReason::QuorumMet,
-                });
+            collector.timeout(); // no-op on an already-finished round
+        }
+        if let Some(cancellation) = collector.cancellation_signal() {
+            let frame = WireMessage::CancellationSignal(cancellation);
             for (node, addr) in &dispatched {
                 if !replied.contains(node) {
-                    TcpMesh::send(*addr, &cancellation, MESH_RPC_TIMEOUT);
+                    TcpMesh::send(*addr, &frame, MESH_RPC_TIMEOUT);
                 }
             }
         }
@@ -615,6 +718,14 @@ impl NodeDaemon {
                 // Execute inline on the connection thread; the stub workload
                 // path is fast, and the coordinator's read timeout bounds us.
                 let task_hex = id::to_hex(assignment.task_id.as_bytes());
+                if self.is_cancelled(assignment.task_id) {
+                    tracing::info!(task = %task_hex, "mesh assignment refused: task cancelled");
+                    return None;
+                }
+                if now_ms() > assignment.deadline_ms {
+                    tracing::warn!(task = %task_hex, "mesh assignment refused: deadline passed");
+                    return None;
+                }
                 tracing::info!(task = %task_hex, "mesh assignment received");
                 match self.execute_locally(assignment.task_id, &assignment.payload) {
                     Ok((hash, _shards)) => {
@@ -637,6 +748,7 @@ impl NodeDaemon {
                     reason = ?signal.reason,
                     "mesh cancellation received"
                 );
+                self.record_cancellation(signal.task_id);
                 None
             }
             WireMessage::DhtQuery(query) => {
@@ -655,11 +767,45 @@ impl NodeDaemon {
         }
     }
 
+    /// Record a cancellation notice for `task_id`, honouring it for
+    /// [`CANCELLATION_TTL`] so a late or reordered assignment is still
+    /// refused. The map is pruned and capped on every touch.
+    fn record_cancellation(&self, task_id: TaskId) {
+        let mut cancelled = lock_ok(&self.cancelled);
+        prune_cancelled(&mut cancelled);
+        if cancelled.len() >= MAX_CANCELLED_TASKS {
+            cancelled.clear();
+        }
+        cancelled.insert(task_id, Instant::now());
+    }
+
+    /// Returns `true` while a cancellation notice for `task_id` is current.
+    fn is_cancelled(&self, task_id: TaskId) -> bool {
+        let mut cancelled = lock_ok(&self.cancelled);
+        prune_cancelled(&mut cancelled);
+        cancelled.contains_key(&task_id)
+    }
+
     /// Insert or refresh a peer record from an advertisement.
+    ///
+    /// Gossiped data is sanitised before it enters the table: our own id is
+    /// never accepted (a peer's view of us must not overwrite our record),
+    /// and addresses that cannot identify a peer (unspecified, broadcast,
+    /// multicast) are dropped.
     fn upsert_advert(&self, advert: PeerAdvert) {
+        if advert.node_id == self.self_id {
+            tracing::debug!("ignoring gossiped advert for ourselves");
+            return;
+        }
+        if let Some(addr) = advert.addr {
+            if !plausible_addr(addr) {
+                tracing::debug!(peer = %id::to_hex(advert.node_id.as_bytes()), %addr, "ignoring advert with implausible address");
+                return;
+            }
+        }
         self.peers
             .lock()
-            .expect("peer table poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .upsert(PeerRecord {
                 node_id: advert.node_id,
                 hardware: advert.hardware,
@@ -703,7 +849,7 @@ impl NodeDaemon {
                 capabilities: beacon.capabilities,
             },
         );
-        let table = self.peers.lock().expect("peer table poisoned");
+        let table = lock_ok(&self.peers);
         for peer in table.live_peers() {
             if peer.node_id == self.self_id {
                 continue;
@@ -725,13 +871,15 @@ impl NodeDaemon {
     /// configured seed and every live peer that has a mesh address. The
     /// responder's gossip reply (its own record plus its known peers) is
     /// upserted into the table, so one static seed propagates the full view.
+    /// Targets are contacted in parallel, each bounded by
+    /// [`BEACON_EXCHANGE_TIMEOUT`], so dead peers cannot stretch the round.
     pub fn exchange_beacons(&self) {
         let beacon = self.current_beacon();
         self.broadcaster.broadcast(&beacon).ok();
         self.stats.heartbeats_sent.fetch_add(1, Ordering::Relaxed);
         self.refresh_self(&beacon);
 
-        let peers = self.peers.lock().expect("peer table poisoned");
+        let peers = lock_ok(&self.peers);
         let mut targets: Vec<SocketAddr> = self.config.mesh.seeds.clone();
         if let Some(mdns) = &self.mdns {
             for addr in mdns.targets() {
@@ -751,12 +899,23 @@ impl NodeDaemon {
         }
         drop(peers);
 
-        for addr in targets {
-            match TcpMesh::exchange(
-                addr,
-                &WireMessage::HeartbeatBeacon(beacon),
-                MESH_RPC_TIMEOUT,
-            ) {
+        let handles: Vec<_> = targets
+            .into_iter()
+            .map(|addr| {
+                let frame = WireMessage::HeartbeatBeacon(beacon);
+                std::thread::spawn(move || {
+                    (
+                        addr,
+                        TcpMesh::exchange(addr, &frame, BEACON_EXCHANGE_TIMEOUT),
+                    )
+                })
+            })
+            .collect();
+        for handle in handles {
+            let Ok((_, reply)) = handle.join() else {
+                continue;
+            };
+            match reply {
                 Some(WireMessage::PeerGossip(gossip)) => {
                     for advert in gossip.peers {
                         self.upsert_advert(advert);
@@ -791,7 +950,7 @@ impl NodeDaemon {
     fn refresh_self(&self, beacon: &HeartbeatBeacon) {
         self.peers
             .lock()
-            .expect("peer table poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .upsert(PeerRecord {
                 node_id: beacon.node_id,
                 hardware: beacon.hardware,
@@ -899,7 +1058,7 @@ async fn eviction_loop(daemon: Arc<NodeDaemon>, mut shutdown: watch::Receiver<bo
         tokio::select! {
             _ = shutdown.changed() => break,
             _ = ticker.tick() => {
-                let evicted = daemon.peers.lock().expect("peer table poisoned").evict_stale();
+                let evicted = lock_ok(&daemon.peers).evict_stale();
                 if evicted > 0 {
                     tracing::debug!(evicted, "stale peers evicted");
                 }
@@ -908,14 +1067,27 @@ async fn eviction_loop(daemon: Arc<NodeDaemon>, mut shutdown: watch::Receiver<bo
     }
 }
 
-/// Select the settlement adapter for the configured chain.
-fn make_settlement(chain: Chain, rpc_url: Option<&str>) -> Arc<dyn Settlement> {
+/// Select the settlement adapter for the configured chain, optionally
+/// persisting balances to `state_file` across restarts.
+fn make_settlement(
+    chain: Chain,
+    rpc_url: Option<&str>,
+    state_file: Option<&std::path::Path>,
+) -> Arc<dyn Settlement> {
     let rpc_url = rpc_url.unwrap_or("stub://local");
     match chain {
-        Chain::Solana => Arc::new(SolanaSettlement::new(rpc_url)),
-        Chain::Base => Arc::new(BaseSettlement::new(rpc_url)),
-        Chain::Near => Arc::new(NearSettlement::new(rpc_url)),
+        Chain::Solana => Arc::new(SolanaSettlement::new_with_state(rpc_url, state_file)),
+        Chain::Base => Arc::new(BaseSettlement::new_with_state(rpc_url, state_file)),
+        Chain::Near => Arc::new(NearSettlement::new_with_state(rpc_url, state_file)),
     }
+}
+
+/// Lock a shared map, tolerating poisoning: a panic in one task must not
+/// wedge every later task behind a poisoned mutex.
+fn lock_ok<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Unix timestamp in milliseconds.
@@ -924,6 +1096,22 @@ pub(crate) fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// Drop expired cancellation notices.
+fn prune_cancelled(cancelled: &mut HashMap<TaskId, Instant>) {
+    let now = Instant::now();
+    cancelled.retain(|_, seen| now.duration_since(*seen) < CANCELLATION_TTL);
+}
+
+/// `true` for addresses that could plausibly identify a reachable peer:
+/// rejects unspecified (0.0.0.0/::), broadcast, and multicast targets.
+/// Loopback stays valid — tests and single-host meshes use it.
+fn plausible_addr(addr: SocketAddr) -> bool {
+    let ip = addr.ip();
+    !(ip.is_unspecified()
+        || ip.is_multicast()
+        || matches!(ip, std::net::IpAddr::V4(v4) if v4.is_broadcast()))
 }
 
 /// Logs heartbeats instead of transmitting them; replaced by the BLE/Wi-Fi
@@ -1018,28 +1206,165 @@ checkpoint_dir = {:?}",
 
         // Two shards: 100 KiB against a 64 KiB shard target.
         let payload = vec![7u8; 100 * 1024];
-        let fingerprint = compiler::fingerprint(&payload, &daemon.config.hardware);
-        let cp_path = dir.join(format!("{}.cp", id::to_hex(&fingerprint)));
+        let task_id = id::generate_task_id();
+        let shards = split_task(
+            task_id,
+            &payload,
+            TaskPriority::Standard,
+            SHARD_TARGET_BYTES,
+        )
+        .unwrap();
+        assert_eq!(shards.len(), 2);
 
-        // Simulate an interruption after the first shard completed.
+        // Simulate an interruption after the first shard: reproduce the
+        // daemon's per-shard execution so the checkpoint carries the true
+        // output prefix.
+        let grant = CapabilityGrant::new(task_id, GRANT_MAX_MEMORY_BYTES, GRANT_MAX_CPU_MS);
+        let compiled = compiler::compile(&shards[0].payload, &daemon.config.hardware).unwrap();
+        let prefix = daemon.sandbox.execute(&grant, &compiled).unwrap();
+        let cp_path = dir.join(format!(
+            "{}-{}.cp",
+            id::to_hex(task_id.as_bytes()),
+            id::to_hex(&compiler::fingerprint(&payload, &daemon.config.hardware))
+        ));
         std::fs::create_dir_all(&dir).unwrap();
-        let interrupted = tpt_mosaic_task::Checkpoint {
-            task_id: TaskId::NIL,
-            last_completed_shard: 1,
-            state_blob: vec![],
-        };
-        tpt_mosaic_task::save_checkpoint(&cp_path, &interrupted).unwrap();
+        tpt_mosaic_task::save_checkpoint(
+            &cp_path,
+            &tpt_mosaic_task::Checkpoint {
+                task_id,
+                last_completed_shard: 1,
+                state_blob: prefix,
+            },
+        )
+        .unwrap();
 
-        let receipt = daemon
-            .run_local_task(&payload, QuorumConfig::BEST_EFFORT_1_OF_1)
-            .expect("resumed task must complete");
-        // Only the remaining shard executed: the hash covers the resume slice.
-        assert_eq!(
-            receipt.agreed_hash,
-            hash_output(&payload[64 * 1024..], HashAlgorithm::Blake3)
-        );
+        // The resumed run must hash the full output — identical to an
+        // uninterrupted run — not just the output of the remaining shards.
+        let (hash, executed) = daemon.execute_locally(task_id, &payload).unwrap();
+        assert_eq!(executed, 2);
+        assert_eq!(hash, hash_output(&payload, HashAlgorithm::Blake3));
         assert!(!cp_path.exists(), "finished tasks clear their checkpoint");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn checkpoints_are_isolated_per_task() {
+        let dir = std::env::temp_dir().join(format!("mosaic-cp-iso-{}", std::process::id()));
+        let config = crate::config::NodeConfig::from_toml_str(&format!(
+            "[task]
+checkpoint_dir = {:?}",
+            dir
+        ))
+        .unwrap();
+        let daemon = NodeDaemon::new(config);
+        let payload = vec![3u8; 64 * 1024];
+
+        // A stale checkpoint left by a different task at this task's path
+        // must be ignored, not resumed.
+        let foreign = id::generate_task_id();
+        let cp_path = dir.join(format!(
+            "{}-{}.cp",
+            id::to_hex(foreign.as_bytes()),
+            id::to_hex(&compiler::fingerprint(&payload, &daemon.config.hardware))
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        tpt_mosaic_task::save_checkpoint(
+            &cp_path,
+            &tpt_mosaic_task::Checkpoint {
+                task_id: foreign,
+                last_completed_shard: 7,
+                state_blob: vec![0xEE; 8],
+            },
+        )
+        .unwrap();
+
+        let task_id = id::generate_task_id();
+        let (hash, executed) = daemon.execute_locally(task_id, &payload).unwrap();
+        assert_eq!(executed, 1);
+        assert_eq!(hash, hash_output(&payload, HashAlgorithm::Blake3));
+        // The foreign checkpoint is untouched by this task.
+        assert!(cp_path.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn expired_and_cancelled_assignments_are_refused() {
+        let daemon = test_daemon();
+        let task_id = id::generate_task_id();
+        let assignment = TaskAssignment {
+            task_id,
+            quorum_config: QuorumConfig::BEST_EFFORT_1_OF_1,
+            payload: b"payload".to_vec(),
+            deadline_ms: 0, // long past
+            coordinator: SocketAddr::from(([127, 0, 0, 1], 1)),
+        };
+        assert!(
+            daemon
+                .handle_mesh_frame(&WireMessage::TaskAssignment(assignment.clone()))
+                .is_none(),
+            "an assignment past its deadline must not execute"
+        );
+
+        // After a cancellation notice the task stays refused even with a
+        // live deadline (late/reordered dispatch).
+        daemon.record_cancellation(task_id);
+        let live = TaskAssignment {
+            deadline_ms: now_ms() + 10_000,
+            ..assignment
+        };
+        assert!(daemon
+            .handle_mesh_frame(&WireMessage::TaskAssignment(live))
+            .is_none());
+    }
+
+    #[test]
+    fn gossiped_adverts_are_validated() {
+        let daemon = test_daemon();
+
+        // Addresses that cannot identify a peer are dropped.
+        for bogus_ip in [
+            [0, 0, 0, 0],         // unspecified
+            [255, 255, 255, 255], // broadcast
+            [224, 0, 0, 1],       // multicast
+        ] {
+            let id = NodeId::from_bytes([bogus_ip[0]; 16]);
+            daemon.upsert_advert(PeerAdvert {
+                node_id: id,
+                addr: Some(SocketAddr::from((bogus_ip, 7000))),
+                hardware: daemon.config.hardware,
+                capabilities: CapabilityFlags::empty(),
+            });
+            assert!(
+                daemon.peers.lock().unwrap().get(&id).is_none(),
+                "addr {bogus_ip:?} must be rejected"
+            );
+        }
+
+        // A plausible advert is accepted.
+        let good = NodeId::from_bytes([10; 16]);
+        daemon.upsert_advert(PeerAdvert {
+            node_id: good,
+            addr: Some(SocketAddr::from(([127, 0, 0, 1], 7001))),
+            hardware: daemon.config.hardware,
+            capabilities: CapabilityFlags::empty(),
+        });
+        assert!(daemon.peers.lock().unwrap().get(&good).is_some());
+
+        // A gossiped advert carrying our own id never enters the table as a
+        // foreign record or overwrites our self-record.
+        let self_advert_peer = NodeId::from_bytes([11; 16]);
+        daemon.upsert_advert(PeerAdvert {
+            node_id: daemon.node_id(),
+            addr: Some(SocketAddr::from(([127, 0, 0, 1], 7002))),
+            hardware: daemon.config.hardware,
+            capabilities: CapabilityFlags::empty(),
+        });
+        assert!(daemon
+            .peers
+            .lock()
+            .unwrap()
+            .get(&self_advert_peer)
+            .is_none());
     }
 
     #[test]
@@ -1067,7 +1392,7 @@ checkpoint_dir = {:?}",
             last_seen: Instant::now(),
         };
         {
-            let mut peers = daemon.peers.lock().expect("peer table poisoned");
+            let mut peers = lock_ok(&daemon.peers);
             peers.upsert(cuda_peer);
             peers.upsert(hot_peer);
         }

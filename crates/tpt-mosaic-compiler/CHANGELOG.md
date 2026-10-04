@@ -7,6 +7,14 @@ in the root [CHANGELOG.md](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking (on-disk format):** cache entries are now
+  `BLAKE3(artifact) || artifact`; raw legacy entries are ignored and
+  recompiled, corrupt/oversize entries are discarded, and the fingerprint
+  includes the compiled-in backend feature set. Temp writes use
+  process-unique names; artifacts above 64 MiB are not cached.
+
 ### Planned
 
 - Cache eviction / size quotas so long-lived edge devices cannot fill storage.

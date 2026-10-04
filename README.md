@@ -28,15 +28,15 @@ Edge Nodes (Tiles)              Anchor Nodes (Ballast)
 | Crate | Role |
 |---|---|
 | [`tpt-mosaic-core`](crates/tpt-mosaic-core/README.md) | Shared types, traits, error enums (`no_std`) |
-| [`tpt-mosaic-proto`](crates/tpt-mosaic-proto/README.md) | FlatBuffers wire protocol, zero-copy serialization |
-| [`tpt-mosaic-discovery`](crates/tpt-mosaic-discovery/README.md) | BLE/UWB/Wi-Fi peer discovery, DHT, heartbeat |
+| [`tpt-mosaic-proto`](crates/tpt-mosaic-proto/README.md) | MOSA binary wire protocol, strict frame codec *(FlatBuffers/zero-copy planned)* |
+| [`tpt-mosaic-discovery`](crates/tpt-mosaic-discovery/README.md) | TCP mesh + mDNS peer discovery, mesh-directory DHT, heartbeat *(BLE/UWB planned)* |
 | [`tpt-mosaic-scheduler`](crates/tpt-mosaic-scheduler/README.md) | Quorum assembly, heterogeneous matching, straggler detection |
 | [`tpt-mosaic-task`](crates/tpt-mosaic-task/README.md) | Micro-task splitting (50–100 ms chunks), checkpoint/restore |
 | [`tpt-mosaic-compiler`](crates/tpt-mosaic-compiler/README.md) | Routes to `tpt-gpu` (CUDA/Metal/Vulkan) or `tpt-crucible` (NPU/DSP/CPU) |
-| [`tpt-mosaic-sandbox`](crates/tpt-mosaic-sandbox/README.md) | `tpt-archon` microkernel interface, RTOS preemption hooks |
+| [`tpt-mosaic-sandbox`](crates/tpt-mosaic-sandbox/README.md) | `tpt-archon` capability confinement *(current workload is an echo stub; RTOS preemption hooks planned)* |
 | [`tpt-mosaic-quorum`](crates/tpt-mosaic-quorum/README.md) | K-of-N consensus, early termination, Byzantine fault detection |
 | [`tpt-mosaic-verify`](crates/tpt-mosaic-verify/README.md) | BLAKE3/SHA-256 hashing, ZK-ML proof stubs, `tpt-eve` hooks |
-| [`tpt-mosaic-economy`](crates/tpt-mosaic-economy/README.md) | Micro-rewards, reputation, slashing — Solana / Base / NEAR |
+| [`tpt-mosaic-economy`](crates/tpt-mosaic-economy/README.md) | Micro-rewards, reputation, slashing — ledger-backed Solana / Base / NEAR adapters *(real RPC planned)* |
 | [`tpt-mosaic-node`](crates/tpt-mosaic-node/README.md) | Main daemon binary: wires all subsystems, runs on every device |
 | [`tpt-mosaic-benches`](benches/README.md) | Criterion suite for the hot paths (not published) |
 
@@ -56,7 +56,7 @@ categories.
 
 - **BLE / UWB** — control plane: peer discovery, heartbeat, capability advertisement *(planned; the TCP mesh is the current v0 transport)*
 - **Wi-Fi** — data plane: model shards, task payloads, result uploads; mDNS zero-config LAN discovery (`mdns` feature)
-- **4G / 5G** — fallback: task assignments and cryptographic proofs only; raw weights never routed over cellular
+- **4G / 5G** — fallback: task assignments and cryptographic proofs only; raw weights never routed over cellular *(the routing policy lives in `tpt-mosaic-task::routing`; the current TCP mesh does not yet classify link types, so the guard is structural)*
 
 ## Quick Start
 

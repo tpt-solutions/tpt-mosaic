@@ -114,6 +114,13 @@ impl HashCollector {
         &self.suspected_byzantine
     }
 
+    /// Nodes that voted for `hash`, in submission order; empty when nobody
+    /// did. The settlement layer uses this to pay the winning quorum's
+    /// contributors (not just the coordinator).
+    pub fn voters_for(&self, hash: &[u8; 32]) -> &[NodeId] {
+        self.votes.get(hash).map(Vec::as_slice).unwrap_or(&[])
+    }
+
     /// Cancellation signal to broadcast for this round, if one is warranted.
     ///
     /// `QuorumMet` once the threshold is reached (early termination, spec
@@ -156,8 +163,7 @@ impl HashCollector {
         if best + remaining < k {
             // Flag nodes outside the leading hash as suspected Byzantine; the
             // hash value breaks ties so the choice is deterministic.
-            if let Some((winning_hash, _)) = self.votes.iter().max_by_key(|(h, v)| (v.len(), **h))
-            {
+            if let Some((winning_hash, _)) = self.votes.iter().max_by_key(|(h, v)| (v.len(), **h)) {
                 for (hash, voters) in &self.votes {
                     if hash != winning_hash {
                         self.suspected_byzantine.extend_from_slice(voters);

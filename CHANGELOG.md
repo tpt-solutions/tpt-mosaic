@@ -12,6 +12,59 @@ All notable changes to tpt-mosaic are documented here. The format follows
   nodes advertise under `_mosaic._udp.local.` and feed discovered addresses
   into the beacon/gossip exchange.
 
+- Worker settlement: the coordinator now pays **every** contributor that
+  voted for the winning hash (not just itself) and records reputation for
+  all winners and Byzantine suspects.
+
+- Optional economy persistence — `[economy] state_file` (settlement ledger
+  balances) and `[economy] reputation_file` (peer reputation scores),
+  loaded at startup and rewritten atomically after updates. Balances
+  saturate on overflow instead of wrapping.
+
+- `ReputationStore` and `InMemoryLedger` gained `save`/`load` (fixed binary
+  format, atomic temp-file writes, corrupt files rejected).
+
+- Scheduler assemblers take a reputation view and prefer higher-reputation
+  peers within an equally diverse group; the daemon excludes slashed peers
+  from assembly. Node/Task IDs are drawn from the OS CSPRNG (`getrandom`),
+  and the identity state file is created `0600` on Unix.
+
+### Changed
+
+- **Breaking (on-disk formats):** checkpoint files are keyed by
+  `<task-id>-<fingerprint>` instead of the fingerprint alone, and their
+  state blob now carries the output produced so far — a resumed run hashes
+  the full output and votes the same digest as an uninterrupted run.
+  Compiled-artifact cache entries are now `BLAKE3(artifact) || artifact`;
+  raw legacy entries are ignored and recompiled, and fingerprints include
+  the compiled-in backend feature set. Old caches/checkpoints are safely
+  discarded.
+
+- Mesh server hardening: concurrent-connection cap (64), a hard 60 s
+  wall-clock budget per inbound connection (enforced across every socket
+  read, so slow-dribble peers cannot extend it), body buffers that grow
+  with the bytes actually received (no 16 MiB pre-allocation from a lying
+  frame header), and transient `accept` errors no longer stop the accept
+  loop.
+
+- Worker honouring: assignments past `deadline_ms` or carrying a cancelled
+  task id are refused (cancellation notices are remembered for 5 minutes);
+  failed mesh rounds broadcast a `Timeout` cancellation to non-repliers
+  via `HashCollector::timeout()`.
+
+- Heartbeat: beacon exchanges run in parallel with a 5 s per-peer budget
+  (previously sequential × 30 s); the peer table is capped at 512 entries
+  (stalest evicted); gossiped adverts for ourselves and adverts with
+  unspecified/broadcast/multicast addresses are ignored.
+
+- Control API: commands are capped at 16 MiB (buffering was previously
+  unbounded) and `SUBMIT` runs on the blocking thread pool so it cannot
+  stall the async runtime.
+
+- Poisoned mutexes no longer wedge the daemon: shared maps use
+  poison-tolerant locking throughout `tpt-mosaic-node` and
+  `tpt-mosaic-discovery`.
+
 ### Planned
 
 - Networked transports beyond the TCP mesh: BLE / UWB control-plane beacons.

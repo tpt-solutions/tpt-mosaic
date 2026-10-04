@@ -14,12 +14,16 @@ pub trait SchedulerPolicy: Send + Sync {
     /// Select exactly `config.n` peers from `candidates` that satisfy the policy.
     ///
     /// Implementations must ensure hardware diversity (GPU vendors, CPU architectures)
-    /// and the correct edge/anchor mix.
+    /// and the correct edge/anchor mix. `reputation` maps a node to its
+    /// `[0.0, 1.0]` reliability score (see the economy crate's
+    /// `ReputationStore`): equally diverse peers with a better record are
+    /// preferred.
     fn assemble(
         &self,
         candidates: &[PeerRecord],
         config: &QuorumConfig,
         required_capabilities: CapabilityFlags,
+        reputation: &dyn Fn(NodeId) -> f32,
     ) -> Result<Vec<NodeId>, MosaicError>;
 }
 
@@ -30,19 +34,43 @@ pub trait SchedulerPolicy: Send + Sync {
 #[derive(Debug, Default)]
 pub struct HeterogeneousAssembler;
 
+/// Order `eligible` candidates: anchor nodes first, then GPU/CPU diversity,
+/// then reputation (best record first) as the final tiebreaker.
+fn order_by_diversity_then_reputation<'a>(
+    mut eligible: Vec<&'a PeerRecord>,
+    reputation: &dyn Fn(NodeId) -> f32,
+) -> Vec<&'a PeerRecord> {
+    let class_key = |p: &PeerRecord| {
+        (
+            !matches!(p.hardware.kind, tpt_mosaic_core::NodeKind::AnchorBallast),
+            p.hardware.gpu_vendor as u8,
+            p.hardware.cpu_arch as u8,
+        )
+    };
+    eligible.sort_unstable_by(|a, b| {
+        class_key(a)
+            .cmp(&class_key(b))
+            // Higher reputation first within an equally diverse group
+            // (`total_cmp` keeps the ordering total despite f32).
+            .then_with(|| reputation(b.node_id).total_cmp(&reputation(a.node_id)))
+    });
+    eligible
+}
+
 impl SchedulerPolicy for HeterogeneousAssembler {
     fn assemble(
         &self,
         candidates: &[PeerRecord],
         config: &QuorumConfig,
         required_capabilities: CapabilityFlags,
+        reputation: &dyn Fn(NodeId) -> f32,
     ) -> Result<Vec<NodeId>, MosaicError> {
         if !config.is_valid() {
             return Err(MosaicError::InvalidQuorumConfig);
         }
 
         // Filter to nodes that are available and have the required capabilities.
-        let mut eligible: Vec<&PeerRecord> = candidates
+        let eligible: Vec<&PeerRecord> = candidates
             .iter()
             .filter(|p| p.hardware.is_available() && p.capabilities.contains(required_capabilities))
             .collect();
@@ -51,16 +79,7 @@ impl SchedulerPolicy for HeterogeneousAssembler {
             return Err(MosaicError::InsufficientCapability);
         }
 
-        // Sort to maximise diversity: anchor nodes first, then by GPU vendor (as u8).
-        eligible.sort_unstable_by_key(|p| {
-            (
-                !p.hardware
-                    .kind
-                    .eq(&tpt_mosaic_core::NodeKind::AnchorBallast),
-                p.hardware.gpu_vendor as u8,
-                p.hardware.cpu_arch as u8,
-            )
-        });
+        let eligible = order_by_diversity_then_reputation(eligible, reputation);
 
         // Greedily pick N nodes, preferring diverse hardware.
         let mut selected: Vec<NodeId> = Vec::with_capacity(config.n as usize);
@@ -145,25 +164,21 @@ impl SchedulerPolicy for BalancedAssembler {
         candidates: &[PeerRecord],
         config: &QuorumConfig,
         required_capabilities: CapabilityFlags,
+        reputation: &dyn Fn(NodeId) -> f32,
     ) -> Result<Vec<NodeId>, MosaicError> {
         if !config.is_valid() {
             return Err(MosaicError::InvalidQuorumConfig);
         }
         let n = config.n as usize;
 
-        let mut eligible: Vec<&PeerRecord> = candidates
+        let eligible: Vec<&PeerRecord> = candidates
             .iter()
             .filter(|p| p.hardware.is_available() && p.capabilities.contains(required_capabilities))
             .collect();
-        // Anchors first, then GPU/CPU diversity ordering (matches
-        // `HeterogeneousAssembler`), so both pools inherit the preference.
-        eligible.sort_unstable_by_key(|p| {
-            (
-                !matches!(p.hardware.kind, tpt_mosaic_core::NodeKind::AnchorBallast),
-                p.hardware.gpu_vendor as u8,
-                p.hardware.cpu_arch as u8,
-            )
-        });
+        // Anchors first, then GPU/CPU diversity ordering, then reputation
+        // (matches `HeterogeneousAssembler`), so both pools inherit the
+        // preference.
+        let eligible = order_by_diversity_then_reputation(eligible, reputation);
         let (anchors, edges): (Vec<&PeerRecord>, Vec<&PeerRecord>) = eligible
             .iter()
             .partition(|p| matches!(p.hardware.kind, tpt_mosaic_core::NodeKind::AnchorBallast));
@@ -245,6 +260,7 @@ mod balanced_tests {
                 &candidates,
                 &QuorumConfig::new(2, 3, TierLevel::Standard),
                 CapabilityFlags::empty(),
+                &|_| 0.5,
             )
             .expect("quorum must assemble");
         assert_eq!(selected.len(), 3);
@@ -270,6 +286,7 @@ mod balanced_tests {
                 &candidates,
                 &QuorumConfig::new(2, 3, TierLevel::Standard),
                 CapabilityFlags::empty(),
+                &|_| 0.5,
             )
             .expect("shortfall must be topped up from the anchor pool");
         assert_eq!(selected.len(), 3);
@@ -292,6 +309,7 @@ mod balanced_tests {
                 &candidates,
                 &QuorumConfig::new(3, 4, TierLevel::Standard),
                 CapabilityFlags::empty(),
+                &|_| 0.5,
             )
             .expect("quorum must assemble");
         assert_eq!(selected.len(), 4);
@@ -307,6 +325,7 @@ mod balanced_tests {
                 &candidates,
                 &QuorumConfig::new(2, 3, TierLevel::Standard),
                 CapabilityFlags::empty(),
+                &|_| 0.5,
             )
             .expect_err("3 nodes cannot come from 1 candidate");
         assert!(matches!(err, MosaicError::InsufficientCapability));
@@ -321,6 +340,7 @@ mod balanced_tests {
                 &candidates,
                 &QuorumConfig::new(6, 3, TierLevel::Standard),
                 CapabilityFlags::empty(),
+                &|_| 0.5,
             )
             .is_err());
     }
@@ -338,11 +358,38 @@ mod balanced_tests {
                 &candidates,
                 &QuorumConfig::new(2, 2, TierLevel::Standard),
                 CapabilityFlags::empty(),
+                &|_| 0.5,
             )
             .expect("quorum must assemble");
         assert!(
             selected.contains(&NodeId::from_bytes([1; 16])),
             "anchor sorts first by default"
         );
+    }
+
+    #[test]
+    fn reputation_breaks_ties_within_a_diversity_group() {
+        // Same class, same (missing) GPU, same arch: only the reputation
+        // ordering distinguishes the two candidates.
+        let candidates = [
+            record(1, NodeKind::EdgeTile, GpuVendor::None),
+            record(2, NodeKind::EdgeTile, GpuVendor::None),
+        ];
+        let policy = BalancedAssembler::default();
+        let selected = policy
+            .assemble(
+                &candidates,
+                &QuorumConfig::new(1, 1, TierLevel::Standard),
+                CapabilityFlags::empty(),
+                &|id| {
+                    if id == NodeId::from_bytes([2; 16]) {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                },
+            )
+            .expect("quorum must assemble");
+        assert_eq!(selected, vec![NodeId::from_bytes([2; 16])]);
     }
 }

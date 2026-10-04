@@ -48,7 +48,22 @@ pub fn fingerprint(workload: &[u8], profile: &HardwareProfile) -> [u8; 32] {
     hasher.update(&[profile.gpu_vendor as u8]);
     hasher.update(&[profile.cpu_arch as u8]);
     hasher.update(&[profile.npu_present as u8]);
+    // Artifacts differ depending on which backend features are compiled in,
+    // so cache keys must not cross feature sets.
+    hasher.update(&feature_set_tag().to_le_bytes());
     *hasher.finalize().as_bytes()
+}
+
+/// Bitset of compile-time backend features, mixed into every fingerprint.
+fn feature_set_tag() -> u32 {
+    let mut tag = 0u32;
+    if cfg!(feature = "gpu") {
+        tag |= 1 << 0;
+    }
+    if cfg!(feature = "crucible") {
+        tag |= 1 << 1;
+    }
+    tag
 }
 
 /// Dispatch a workload for compilation against `profile`.

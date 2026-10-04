@@ -15,6 +15,8 @@
 
 use alloc::vec::Vec;
 use core::net::{IpAddr, SocketAddr};
+#[cfg(feature = "std")]
+use std::io::Read;
 
 use tpt_mosaic_core::{
     CapabilityFlags, CpuArch, GpuVendor, HardwareProfile, MosaicError, NodeId, NodeKind,
@@ -131,7 +133,9 @@ pub fn decode(frame: &[u8]) -> Result<WireMessage, MosaicError> {
 /// Read exactly one frame from a byte stream (feature `std`).
 ///
 /// Corrupt headers map to `InvalidData`; payloads larger than
-/// [`MAX_PAYLOAD_LEN`] are rejected without allocation.
+/// [`MAX_PAYLOAD_LEN`] are rejected without allocation. The body buffer grows
+/// with the bytes that actually arrive instead of pre-allocating the announced
+/// size, so a lying header cannot force a 16 MiB allocation.
 #[cfg(feature = "std")]
 pub fn read_frame<R: std::io::Read>(reader: &mut R) -> std::io::Result<WireMessage> {
     let mut header = [0u8; HEADER_LEN];
@@ -143,9 +147,15 @@ pub fn read_frame<R: std::io::Read>(reader: &mut R) -> std::io::Result<WireMessa
             "frame payload exceeds MAX_PAYLOAD_LEN",
         ));
     }
-    let mut frame = alloc::vec![0u8; HEADER_LEN + payload_len];
-    frame[..HEADER_LEN].copy_from_slice(&header);
-    reader.read_exact(&mut frame[HEADER_LEN..])?;
+    let mut frame = alloc::vec![0u8; HEADER_LEN];
+    frame.copy_from_slice(&header);
+    let read = reader.take(payload_len as u64).read_to_end(&mut frame)?;
+    if read != payload_len {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "frame payload shorter than announced",
+        ));
+    }
     decode(&frame).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
@@ -645,6 +655,14 @@ mod tests {
 
         // Truncated stream -> UnexpectedEof from read_exact.
         let err = read_frame(&mut std::io::Cursor::new(&buf[..buf.len() - 1])).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+
+        // A header announcing more payload than the stream delivers is
+        // rejected without pre-allocating the announced size.
+        let mut short = buf.clone();
+        let plen = u32::from_le_bytes(short[7..11].try_into().expect("4 bytes"));
+        short[7..11].copy_from_slice(&(plen + 1).to_le_bytes());
+        let err = read_frame(&mut std::io::Cursor::new(&short)).unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
     }
 

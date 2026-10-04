@@ -124,24 +124,22 @@ in-tree; unchecked items are pending. Stubbed integration points are marked.
 
 ## Phase 13 — Correctness & security fixes (from platform review)
 
-Done in working tree (untested — `cargo test` not yet run):
 - [x] `HashCollector`: one vote per node, optional member allow-list, early divergence, deterministic tie-break
 - [x] `QuorumConfig::is_valid` requires strict majority (`2k > n`)
 - [x] Daemon rejects `ResultHash` replies with wrong `task_id` / `node_id`; only assembled candidates may vote
 - [x] Sandbox violation flag shared via `Rc<Cell<bool>>` (was copied, never observed)
+- [x] Run full test suite / clippy for the changes above
+- [x] Checkpoint resume hashes the full output (state blob carries the output-so-far); files keyed by task id + fingerprint; write failures logged
+- [x] Mesh server hardening: connection cap (64), 60 s per-connection wall-clock budget (enforced across reads), incremental body allocation (no 16 MiB pre-alloc), transient `accept` errors survived
+- [x] Honour `deadline_ms` + `CancellationSignal` on workers (cancelled tasks remembered 5 min); `HashCollector::timeout()` applied in `run_network_task` (`Timeout` broadcast to non-repliers)
+- [x] Control API: 16 MiB line cap; `SUBMIT` via `spawn_blocking`
+- [x] Heartbeat: parallel beacon exchange with 5 s per-peer budget, peer table capped at 512 (stalest evicted), gossiped addrs validated (self/self-id, unspecified/broadcast/multicast rejected)
+- [x] Pay workers (every winning voter credited, not only the coordinator); reputation wired into the assemblers (tie-break) + `finish_task` (winners up, Byzantine suspects down); ledger + reputation persist via `[economy] state_file` / `reputation_file`
+- [x] Poisoned-mutex `expect`s replaced with poison-tolerant locking (node + discovery); saturating ledger arithmetic; CSPRNG ids (`getrandom`); `0600` identity file on Unix
+- [x] Compiler cache: BLAKE3 integrity digest per entry (corrupt/oversize entries discarded), backend feature set in the fingerprint, process-unique tmp names, 64 MiB size cap
 
 Open:
-- [ ] Run full test suite / clippy for the changes above
-- [ ] Checkpoint resume must hash the full output; key checkpoints by task id + nonce; log write failures
-- [ ] Mesh server hardening: connection cap, overall frame deadline, no 16 MiB pre-allocation, survive transient `accept` errors
-- [ ] Honour `deadline_ms` + `CancellationSignal` on workers; apply `HashCollector::timeout()` in `run_network_task`
-- [ ] Control API: cap line length, run `SUBMIT` via `spawn_blocking`
-- [ ] Heartbeat: parallel/short-timeout beacon exchange, cap peer table, validate gossiped addrs
-- [ ] Pay workers (not only coordinator); wire reputation into assembler + `finish_task`; persist reputation and ledger
-- [ ] Replace poisoned-mutex `expect`s, saturating ledger arithmetic, CSPRNG ids, 0600 identity file
-- [ ] Compiler cache: integrity hash, feature set in fingerprint, unique tmp names, size cap
 - [ ] Node identity: ed25519 keys, `NodeId = hash(pubkey)`, signed beacons/assignments/results, nonce + timestamp replay protection
-- [ ] Align README/todo with reality (sandbox echo-only, in-memory ledger, hand-rolled codec, mesh-directory "DHT", unenforced cellular guard)
 
 ## Phase 14 — Adoption & usability
 

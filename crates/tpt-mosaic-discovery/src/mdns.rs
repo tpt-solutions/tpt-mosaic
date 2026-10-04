@@ -110,14 +110,14 @@ impl MdnsHandle {
                         let addr = SocketAddr::new((*addr).into(), info.get_port());
                         discovered
                             .lock()
-                            .expect("mdns registry poisoned")
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
                             .insert(peer, addr);
                     }
                     Ok(ServiceEvent::ServiceRemoved(_, fullname)) => {
                         if let Some(peer) = node_id_from_instance(&fullname) {
                             discovered
                                 .lock()
-                                .expect("mdns registry poisoned")
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
                                 .remove(&peer);
                         }
                     }
@@ -141,7 +141,7 @@ impl MdnsHandle {
     pub fn targets(&self) -> Vec<SocketAddr> {
         self.discovered
             .lock()
-            .expect("mdns registry poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .values()
             .copied()
             .collect()
@@ -151,7 +151,7 @@ impl MdnsHandle {
     pub fn discovered_ids(&self) -> Vec<NodeId> {
         self.discovered
             .lock()
-            .expect("mdns registry poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .keys()
             .copied()
             .collect()

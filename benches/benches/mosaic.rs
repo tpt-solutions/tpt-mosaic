@@ -160,6 +160,7 @@ fn bench_assembly(c: &mut Criterion) {
                 black_box(&candidates),
                 &QuorumConfig::MISSION_CRITICAL_7_OF_10,
                 CapabilityFlags::empty(),
+                &|_| 0.5,
             )
             .expect("assembles from 500 candidates")
         })

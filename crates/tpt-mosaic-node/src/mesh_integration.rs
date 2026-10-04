@@ -220,6 +220,97 @@ fn dead_member_without_spares_fails_the_round() {
 }
 
 #[test]
+fn workers_are_paid_and_reputed_by_the_coordinator() {
+    let (hub, _hub_guard) = spawn_daemon(None, None);
+    let hub_addr = hub.mesh_addr().expect("hub mesh addr");
+    let (worker, _worker_guard) = spawn_daemon(Some(&hub_addr), None);
+
+    hub.exchange_beacons();
+    assert!(wait_until(
+        || {
+            worker.exchange_beacons();
+            hub.peer_ids().len() == 2
+        },
+        50
+    ));
+
+    let receipt = hub
+        .run_network_task(
+            b"payment payload",
+            QuorumConfig::new(2, 2, TierLevel::BestEffort),
+        )
+        .expect("2-of-2 quorum must be met");
+    assert_eq!(receipt.confirmations, 2);
+
+    // Both contributors are credited on the coordinator's ledger with the
+    // same per-node reward, and both gain reputation with it.
+    assert_eq!(hub.balance_of(worker.node_id()), receipt.reward);
+    assert_eq!(hub.balance_of(hub.node_id()), receipt.reward);
+    assert!(
+        hub.reputation_of(worker.node_id()) > tpt_mosaic_economy::reputation::DEFAULT_SCORE,
+        "the remote worker's reputation must rise"
+    );
+    assert!(
+        hub.reputation_of(hub.node_id()) > tpt_mosaic_economy::reputation::DEFAULT_SCORE,
+        "the coordinator's own reputation must rise"
+    );
+}
+
+#[test]
+fn ledger_and_reputation_persist_across_restarts() {
+    let dir = std::env::temp_dir().join(format!("mosaic-econ-{}", std::process::id()));
+    let state = dir.join("ledger.bin");
+    let rep = dir.join("reputation.bin");
+    let config = NodeConfig::from_toml_str(&format!(
+        "[node]\nid = \"00112233445566778899aabbccddeeff\"\n\n[mesh]\nlisten_port = 0\n\n[economy]\nstate_file = {:?}\nreputation_file = {:?}",
+        state, rep
+    ))
+    .expect("valid economy config");
+
+    let worker_id;
+    let paid;
+    {
+        let (hub, _hub_guard) = {
+            let daemon = Arc::new(NodeDaemon::new(config.clone()));
+            let guard = daemon.start_mesh().expect("mesh bound");
+            (daemon, guard)
+        };
+        let hub_addr = hub.mesh_addr().expect("hub mesh addr");
+        let (worker, _worker_guard) = spawn_daemon(Some(&hub_addr), None);
+        hub.exchange_beacons();
+        assert!(wait_until(
+            || {
+                worker.exchange_beacons();
+                hub.peer_ids().len() == 2
+            },
+            50
+        ));
+        let receipt = hub
+            .run_network_task(
+                b"persisted payload",
+                QuorumConfig::new(2, 2, TierLevel::BestEffort),
+            )
+            .expect("quorum must be met");
+        worker_id = worker.node_id();
+        paid = receipt.reward;
+        assert_eq!(hub.balance_of(worker_id), paid);
+    }
+    // Everything is dropped: sockets closed, in-memory state gone.
+
+    let restarted = Arc::new(NodeDaemon::new(config));
+    assert_eq!(
+        restarted.balance_of(worker_id),
+        paid,
+        "ledger must be restored from the state file"
+    );
+    assert!(
+        restarted.reputation_of(worker_id) > tpt_mosaic_economy::reputation::DEFAULT_SCORE,
+        "reputation must be restored from the state file"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn gossip_propagates_peers_beyond_static_seeds() {
     // Star topology: both workers seed ONLY the hub; they never list each
     // other. The hub's gossip replies must teach them about one another.

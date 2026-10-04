@@ -89,6 +89,10 @@ pub struct NodeConfig {
     /// Optional directory for in-flight task checkpoints, enabling resume of
     /// interrupted executions.
     pub checkpoint_dir: Option<std::path::PathBuf>,
+    /// Optional file persisting settlement ledger balances across restarts.
+    pub economy_state_file: Option<std::path::PathBuf>,
+    /// Optional file persisting peer reputation scores across restarts.
+    pub reputation_file: Option<std::path::PathBuf>,
 }
 
 /// Configuration parse failure with a human-readable description.
@@ -262,6 +266,12 @@ impl NodeConfig {
             }
         };
         let rpc_url = opt_str(econ, "economy", "rpc_url")?.map(str::to_owned);
+        let economy_state_file = opt_str(econ, "economy", "state_file")?
+            .filter(|s| !s.is_empty())
+            .map(std::path::PathBuf::from);
+        let reputation_file = opt_str(econ, "economy", "reputation_file")?
+            .filter(|s| !s.is_empty())
+            .map(std::path::PathBuf::from);
 
         // ── [control] ─────────────────────────────────────────────────────
         let ctrl = root.get("control");
@@ -356,6 +366,8 @@ impl NodeConfig {
             },
             jit_cache,
             checkpoint_dir,
+            economy_state_file,
+            reputation_file,
         })
     }
 }

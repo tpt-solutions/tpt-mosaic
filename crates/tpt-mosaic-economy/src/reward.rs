@@ -62,7 +62,7 @@ pub struct SlashingRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tpt_mosaic_core::{QuorumConfig, TierLevel};
+    use tpt_mosaic_core::QuorumConfig;
 
     #[test]
     fn zero_shards_pay_nothing() {

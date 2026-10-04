@@ -1308,6 +1308,7 @@ dependencies = [
  "tpt-crucible-common",
  "tpt-gpu-runtime",
  "tpt-mosaic-core",
+ "tracing",
 ]
 
 [[package]]
@@ -1324,6 +1325,7 @@ dependencies = [
  "mdns-sd",
  "tpt-mosaic-core",
  "tpt-mosaic-proto",
+ "tracing",
 ]
 
 [[package]]
@@ -1339,6 +1341,7 @@ dependencies = [
 name = "tpt-mosaic-node"
 version = "0.1.0"
 dependencies = [
+ "getrandom 0.3.4",
  "tokio",
  "toml",
  "tpt-mosaic-compiler",

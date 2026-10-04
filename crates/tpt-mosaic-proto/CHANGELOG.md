@@ -7,6 +7,13 @@ in the root [CHANGELOG.md](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+### Changed
+
+- `read_frame` no longer pre-allocates the announced payload size; the
+  buffer grows with the bytes that actually arrive, so a lying header
+  cannot force a 16 MiB allocation. Short frames now fail with
+  `UnexpectedEof`.
+
 ### Planned
 
 - FlatBuffers `.fbs` schemas under `schemas/` with a `build.rs` running

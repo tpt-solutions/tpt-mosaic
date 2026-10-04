@@ -8,9 +8,9 @@
 //! the same handler contract later.
 
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tpt_mosaic_proto::{read_frame, write_frame, WireMessage};
 
@@ -21,9 +21,14 @@ use tpt_mosaic_proto::{read_frame, write_frame, WireMessage};
 /// with its [`ResultHash`][tpt_mosaic_proto::ResultHash]).
 pub type FrameHandler = Arc<dyn Fn(&WireMessage) -> Option<WireMessage> + Send + Sync>;
 
-/// Read timeout applied to inbound connections, generous enough for inline
-/// task execution on the handler thread.
-const INBOUND_READ_TIMEOUT: Duration = Duration::from_secs(30);
+/// Wall-clock budget for one inbound connection (request read + handler run +
+/// reply write). Enforced across every socket operation, so a peer dribbling
+/// bytes just under the per-read timeout still hits a hard deadline.
+const CONNECTION_BUDGET: Duration = Duration::from_secs(60);
+
+/// Upper bound on concurrently served mesh connections; excess connections
+/// are accepted and immediately closed instead of growing the thread count.
+const MAX_CONNECTIONS: usize = 64;
 
 /// Poll interval for the non-blocking accept loop while shutting down.
 const ACCEPT_POLL: Duration = Duration::from_millis(20);
@@ -34,25 +39,44 @@ pub struct TcpMesh;
 impl TcpMesh {
     /// Serve inbound connections on `listener` until `running` is cleared.
     ///
-    /// Each accepted connection is handled on its own thread; a malformed or
-    /// empty exchange is ignored.
+    /// Each accepted connection is handled on its own thread, capped at 64
+    /// concurrent handlers; a malformed, slow, or empty exchange is ignored,
+    /// and transient `accept` errors never stop the loop.
     pub fn serve(
         listener: TcpListener,
         handler: FrameHandler,
         running: Arc<AtomicBool>,
     ) -> std::thread::JoinHandle<()> {
         let _ = listener.set_nonblocking(true);
+        let active = Arc::new(AtomicUsize::new(0));
         std::thread::spawn(move || {
             while running.load(Ordering::Relaxed) {
                 match listener.accept() {
-                    Ok((stream, _peer)) => {
+                    Ok((stream, peer)) => {
+                        if active.load(Ordering::Relaxed) >= MAX_CONNECTIONS {
+                            tracing::debug!(
+                                peer = %peer,
+                                "mesh connection cap reached; closing inbound connection"
+                            );
+                            continue; // dropping the stream closes the connection
+                        }
                         let handler = handler.clone();
-                        std::thread::spawn(move || handle_connection(stream, handler));
+                        let active = active.clone();
+                        active.fetch_add(1, Ordering::Relaxed);
+                        std::thread::spawn(move || {
+                            handle_connection(stream, handler);
+                            active.fetch_sub(1, Ordering::Relaxed);
+                        });
                     }
                     Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                         std::thread::sleep(ACCEPT_POLL);
                     }
-                    Err(_) => break,
+                    // Transient failures (fd exhaustion, aborted connects)
+                    // must not kill the accept loop; back off and retry.
+                    Err(e) => {
+                        tracing::warn!(error = %e, "mesh accept failed; continuing");
+                        std::thread::sleep(ACCEPT_POLL);
+                    }
                 }
             }
         })
@@ -88,12 +112,47 @@ impl TcpMesh {
     }
 }
 
+/// [`std::io::Read`] adapter enforcing an absolute deadline across every
+/// socket read: each syscall gets whatever budget remains, so a peer cannot
+/// extend the exchange indefinitely by dribbling bytes under the timeout.
+struct DeadlineReader<'a> {
+    stream: &'a mut TcpStream,
+    deadline: Instant,
+}
+
+impl std::io::Read for DeadlineReader<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let remaining = self.deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "mesh connection budget exhausted",
+            ));
+        }
+        self.stream.set_read_timeout(Some(remaining))?;
+        self.stream.read(buf)
+    }
+}
+
 fn handle_connection(mut stream: TcpStream, handler: FrameHandler) {
-    let _ = stream.set_read_timeout(Some(INBOUND_READ_TIMEOUT));
-    let request = match read_frame(&mut stream) {
-        Ok(msg) => msg,
-        Err(_) => return,
+    let deadline = Instant::now() + CONNECTION_BUDGET;
+    let request = {
+        let mut reader = DeadlineReader {
+            stream: &mut stream,
+            deadline,
+        };
+        match read_frame(&mut reader) {
+            Ok(msg) => msg,
+            Err(_) => return,
+        }
     };
+    // The handler may legitimately run long (inline task execution); the
+    // reply write gets whatever connection budget is left.
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return;
+    }
+    let _ = stream.set_write_timeout(Some(remaining));
     if let Some(reply) = handler(&request) {
         let _ = write_frame(&mut stream, &reply);
     }
@@ -157,6 +216,27 @@ mod tests {
             Duration::from_millis(250),
         );
         assert_eq!(reply, None);
+    }
+
+    #[test]
+    fn server_survives_garbage_connections() {
+        let (addr, running) = start_echo_server();
+
+        // Raw non-MOSA bytes, then an abrupt close: neither may kill the
+        // accept loop or poison later exchanges.
+        for _ in 0..3 {
+            let mut junk = std::net::TcpStream::connect(addr).expect("connect");
+            std::io::Write::write_all(&mut junk, &[0xDE, 0xAD, 0xBE, 0xEF]).unwrap();
+            drop(junk);
+        }
+        // A connection that never sends anything is dropped when the
+        // connection budget expires; close it right away instead.
+        let idle = std::net::TcpStream::connect(addr).expect("connect idle");
+        drop(idle);
+
+        let reply = TcpMesh::exchange(addr, &beacon(addr.port()), Duration::from_secs(2));
+        assert_eq!(reply, Some(beacon(addr.port())));
+        running.store(false, Ordering::Relaxed);
     }
 
     #[test]

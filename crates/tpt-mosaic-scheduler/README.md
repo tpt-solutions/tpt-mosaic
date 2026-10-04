@@ -42,13 +42,17 @@ pub trait MyPolicy: Send + Sync {
         candidates: &[PeerRecord],
         config: &QuorumConfig,
         required_capabilities: CapabilityFlags,
+        reputation: &dyn Fn(NodeId) -> f32,
     ) -> Result<Vec<NodeId>, MosaicError>;
 }
 ```
 
 Implement it to plug a custom selection strategy (energy-aware, geographic,
 cost-optimising) into the node daemon. Implementations must return exactly
-`config.n` nodes that satisfy the policy.
+`config.n` nodes that satisfy the policy. The `reputation` closure maps a
+node to its `[0.0, 1.0]` reliability score (see the economy crate's
+`ReputationStore`); built-in assemblers use it to break ties between equally
+diverse candidates.
 
 ## Built-in assemblers
 
@@ -59,7 +63,12 @@ use tpt_mosaic_core::{CapabilityFlags, QuorumConfig};
 use tpt_mosaic_scheduler::{HeterogeneousAssembler, SchedulerPolicy};
 
 let config = QuorumConfig::STANDARD_3_OF_5;
-let selected = HeterogeneousAssembler.assemble(&candidates, &config, CapabilityFlags::CUDA)?;
+let selected = HeterogeneousAssembler.assemble(
+    &candidates,
+    &config,
+    CapabilityFlags::CUDA,
+    &|_| 0.5, // reputation view; e.g. `|id| store.score(id)`
+)?;
 ```
 
 Selection proceeds in three stages:

@@ -9,6 +9,25 @@ in the root [CHANGELOG.md](../../CHANGELOG.md).
 
 ### Added
 
+- Worker settlement: every contributor voting for the winning hash is paid,
+  and reputation records winners up / Byzantine suspects down; slashed
+  peers are excluded from assembly.
+- `[economy] state_file` / `reputation_file` persist the ledger and
+  reputation across restarts; `[task] checkpoint_dir` resume now hashes
+  the full output and keys files per task.
+- Node/task IDs come from the OS CSPRNG; the identity file is created
+  `0600` on Unix.
+
+### Changed
+
+- Hardening: workers refuse assignments past `deadline_ms` or for a
+  cancelled task; failed mesh rounds broadcast `Timeout` cancellations;
+  beacon exchanges run in parallel with a 5 s per-peer budget; gossiped
+  adverts are validated; control-API lines are capped and `SUBMIT` runs
+  off the async runtime; poisoned mutexes no longer wedge the daemon.
+
+### Added
+
 - `[mesh] mdns = true` — zero-config LAN discovery; nodes advertise under
   `_mosaic._udp.local.` and the discovered addresses feed into the existing
   beacon/gossip exchange, so a deployment can run with no seed list at all.

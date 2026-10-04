@@ -14,6 +14,14 @@ pub use reward::{calculate_reward, SlashingRecord};
 
 use tpt_mosaic_core::{MosaicError, NodeId};
 
+/// Lock `mutex`, tolerating a poisoned lock: a panic in another thread must
+/// not permanently wedge settlement or reputation bookkeeping.
+pub(crate) fn lock_ignoring_poison<T>(mutex: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// Chain-agnostic interface for submitting micro-reward transactions.
 pub trait Settlement: Send + Sync {
     /// Submit a reward of `amount` (in chain-native micro-units) to `node_id`.

@@ -21,3 +21,4 @@ mdns = ["dep:mdns-sd"]
 mdns-sd          = { workspace = true, optional = true }
 tpt-mosaic-core  = { workspace = true, features = ["std"] }
 tpt-mosaic-proto = { workspace = true, features = ["std"] }
+tracing          = { workspace = true }

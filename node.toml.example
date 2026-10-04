@@ -64,9 +64,20 @@ seeds = ["127.0.0.1:7801", "127.0.0.1:7802"]
 # Settlement chain for earned micro-rewards: solana | base | near
 chain = "solana"
 # Optional RPC endpoint handed to the settlement adapter. The current stub
-# adapters settle against a local in-memory ledger; real RPC calls land with
-# the chain SDK features.
+# adapters settle against a local ledger; real RPC calls land with the chain
+# SDK features.
 # rpc_url = "https://api.mainnet-beta.solana.com"
+# Persist ledger balances across restarts (atomic rewrite on every credit).
+# Leave empty to keep balances in memory only.
+state_file = ""
+# Persist peer reputation scores across restarts (rewrite after each task).
+# Leave empty to keep reputation in memory only.
+reputation_file = ""
+
+[task]
+# Directory for in-flight task checkpoints: an interrupted execution resumes
+# where it stopped (hashing the full output). Leave empty to disable resume.
+checkpoint_dir = ""
 
 [control]
 # Local control API for the host OS (line protocol over loopback TCP):

@@ -7,6 +7,18 @@ in the root [CHANGELOG.md](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- `InMemoryLedger::save` / `load` and `ReputationStore::save` / `load`:
+  fixed-layout binary persistence with atomic temp-file writes; corrupt
+  files are rejected, missing ones start empty.
+- `*_Settlement::new_with_state` constructors persist adapter balances.
+
+### Changed
+
+- Ledger credit saturates on `u64` overflow instead of wrapping.
+- Shared maps use poison-tolerant locking.
+
 ### Planned
 
 - On-chain settlement adapters with live RPC once the Solana / Ethers /

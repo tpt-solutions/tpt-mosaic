@@ -23,6 +23,7 @@ gpu      = ["dep:tpt-gpu-runtime"]
 crucible = ["dep:tpt-crucible-catalyst", "dep:tpt-crucible-common"]
 
 [dependencies]
+tracing          = { workspace = true }
 tpt-mosaic-core = { workspace = true, features = ["std"] }
 blake3          = { workspace = true }
 tpt-gpu-runtime       = { workspace = true, optional = true }

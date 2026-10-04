@@ -82,10 +82,12 @@ let binary = cache.compile_cached(workload_bytes, &profile)?;  // hit or compile
 let _ = cache.entry_path(fp);                  // var/jit/<hex>.fbin
 ```
 
-Cache entries are keyed by a BLAKE3 fingerprint over the workload bytes plus
-every hardware-profile field, so a cached artifact can never be replayed onto
-incompatible silicon. The cache is immutable by design: the fingerprint depends
-only on the inputs, so entries never go stale.
+Cache entries are keyed by a BLAKE3 fingerprint over the workload bytes, the
+hardware-profile fields, and the compiled-in backend feature set, so a cached
+artifact can never be replayed onto incompatible silicon or a different
+backend build. Entries are stored integrity-framed as `BLAKE3(artifact) ||
+artifact`: corrupt or oversize entries are discarded and recompiled, never
+served. The fingerprint depends only on the inputs, so entries never go stale.
 
 ### GPU probe (`gpu` feature)
 

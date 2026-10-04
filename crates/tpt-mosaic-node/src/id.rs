@@ -1,29 +1,16 @@
 //! Node/task identity generation and hex encoding helpers.
 
-use std::collections::hash_map::RandomState;
-use std::hash::{BuildHasher, Hasher};
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use tpt_mosaic_core::{NodeId, TaskId};
 
-/// Generate 16 bytes of low-quality randomness by hashing the wall clock under
-/// two independently-seeded `RandomState` keys. Sufficient for node/task IDs
-/// in the current stub networking layer; replace with OS entropy
-/// (`getrandom`) when real peer identity lands.
+/// Generate 16 bytes from the operating system's CSPRNG. Node and task IDs
+/// are security-relevant (they gate quorum membership and checkpoint paths),
+/// so they never fall back to time- or address-derived pseudo-entropy.
+///
+/// Panics only if the OS entropy source is broken — effectively never on
+/// supported platforms.
 pub fn generate_bytes() -> [u8; 16] {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-
-    let mut h1 = RandomState::new().build_hasher();
-    h1.write_u128(nanos);
-    let mut h2 = RandomState::new().build_hasher();
-    h2.write_u128(nanos.swap_bytes());
-
     let mut out = [0u8; 16];
-    out[..8].copy_from_slice(&h1.finish().to_le_bytes());
-    out[8..].copy_from_slice(&h2.finish().to_le_bytes());
+    getrandom::fill(&mut out).expect("OS entropy source is unavailable");
     out
 }
 
@@ -53,8 +40,30 @@ pub fn load_or_create(path: &std::path::Path) -> std::io::Result<NodeId> {
             std::fs::create_dir_all(parent)?;
         }
     }
-    std::fs::write(path, to_hex(id.as_bytes()))?;
+    write_private(path, &to_hex(id.as_bytes()))?;
     Ok(id)
+}
+
+/// Write `contents` to `path` owner-only: created `0600` on Unix, default
+/// ACLs elsewhere (the file holds the persistent node identity).
+fn write_private(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)?
+            .write_all(contents.as_bytes())?;
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(path, contents)
+    }
 }
 
 /// Lowercase hex-encode `bytes`.

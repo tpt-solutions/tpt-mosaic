@@ -77,7 +77,8 @@ tasks over the control API and executes them locally as a 1-of-1 quorum.
 | `[capabilities]` | Capability flags advertised in beacons: `cuda`, `metal`, `vulkan`, `npu`, `dsp`, `fpga`, `cpu_vector` |
 | `[discovery]` | `heartbeat_interval_ms` and `peer_max_age_ms` (eviction window) |
 | `[mesh]` | TCP mesh `listen_addr` / `listen_port`, `mdns`, and `seeds` |
-| `[economy]` | Settlement `chain` (`solana` / `base` / `near`) and optional `rpc_url` |
+| `[economy]` | Settlement `chain` (`solana` / `base` / `near`), optional `rpc_url`, and persistence: `state_file` (ledger balances) / `reputation_file` (peer scores), both rewritten atomically |
+| `[task]` | `checkpoint_dir` for resuming interrupted executions (empty disables) |
 | `[control]` | Loopback control API `listen_addr` / `listen_port` (`0` disables) |
 
 The presence of `[mesh]` enables the mesh. Set `listen_port = 0` for an

@@ -6,8 +6,11 @@
 
 use std::collections::HashMap;
 
-use tpt_mosaic_core::NodeId;
+use tpt_mosaic_core::{MosaicError, NodeId};
 use tpt_mosaic_quorum::QuorumResult;
+
+use crate::chains::write_atomically;
+use crate::lock_ignoring_poison;
 
 /// Starting score for nodes with no history yet.
 pub const DEFAULT_SCORE: f32 = 0.5;
@@ -20,11 +23,12 @@ pub const SLASH_THRESHOLD: f32 = 0.2;
 
 /// In-memory reputation store.
 ///
-/// Scores are clamped to `[0.0, 1.0]`. Swap for a persistent backing store
-/// before production use.
-#[derive(Debug, Clone)]
+/// Scores are clamped to `[0.0, 1.0]`. The internal map is behind a
+/// poison-tolerant mutex, so `score` can be read through a shared reference
+/// while another thread records outcomes.
+#[derive(Debug)]
 pub struct ReputationStore {
-    scores: HashMap<NodeId, f32>,
+    scores: std::sync::Mutex<HashMap<NodeId, f32>>,
 }
 
 impl Default for ReputationStore {
@@ -37,7 +41,7 @@ impl ReputationStore {
     /// Create an empty store.
     pub fn new() -> Self {
         Self {
-            scores: HashMap::new(),
+            scores: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -63,7 +67,10 @@ impl ReputationStore {
 
     /// Current reputation of `node_id` ([`DEFAULT_SCORE`] if never seen).
     pub fn score(&self, node_id: NodeId) -> f32 {
-        self.scores.get(&node_id).copied().unwrap_or(DEFAULT_SCORE)
+        lock_ignoring_poison(&self.scores)
+            .get(&node_id)
+            .copied()
+            .unwrap_or(DEFAULT_SCORE)
     }
 
     /// Returns `true` if the node's reputation has fallen below
@@ -74,17 +81,69 @@ impl ReputationStore {
 
     /// Number of tracked nodes.
     pub fn len(&self) -> usize {
-        self.scores.len()
+        lock_ignoring_poison(&self.scores).len()
     }
 
     /// Returns `true` if no nodes are tracked.
     pub fn is_empty(&self) -> bool {
-        self.scores.is_empty()
+        lock_ignoring_poison(&self.scores).is_empty()
+    }
+
+    /// Serialize every score: `u32` LE count, then per entry 16 id bytes +
+    /// `f32` LE bit pattern.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let scores = lock_ignoring_poison(&self.scores);
+        let mut out = Vec::with_capacity(4 + scores.len() * 20);
+        out.extend_from_slice(&(scores.len() as u32).to_le_bytes());
+        for (id, score) in scores.iter() {
+            out.extend_from_slice(id.as_bytes());
+            out.extend_from_slice(&score.to_le_bytes());
+        }
+        out
+    }
+
+    /// Restore a store written by [`ReputationStore::to_bytes`].
+    ///
+    /// Scores are clamped back into `[0.0, 1.0]` on load, so a corrupt file
+    /// cannot inject out-of-range reputations.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, MosaicError> {
+        if bytes.len() < 4 {
+            return Err(MosaicError::SerializationError);
+        }
+        let count = u32::from_le_bytes(bytes[0..4].try_into().expect("4 bytes")) as usize;
+        if bytes.len() != 4 + count * 20 {
+            return Err(MosaicError::SerializationError);
+        }
+        let mut scores = HashMap::with_capacity(count);
+        for entry in bytes[4..].chunks_exact(20) {
+            let id = NodeId::from_bytes(entry[0..16].try_into().expect("16 bytes"));
+            let score = f32::from_le_bytes(entry[16..20].try_into().expect("4 bytes"));
+            scores.insert(id, score.clamp(0.0, 1.0));
+        }
+        Ok(Self {
+            scores: std::sync::Mutex::new(scores),
+        })
+    }
+
+    /// Persist atomically (temp file + rename) to `path`.
+    pub fn save(&self, path: &std::path::Path) -> std::io::Result<()> {
+        write_atomically(path, &self.to_bytes())
+    }
+
+    /// Load a store previously written by [`ReputationStore::save`]. A
+    /// missing file yields an empty store; a corrupt one is an error.
+    pub fn load(path: &std::path::Path) -> std::io::Result<Self> {
+        match std::fs::read(path) {
+            Ok(bytes) => Self::from_bytes(&bytes)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::new()),
+            Err(e) => Err(e),
+        }
     }
 
     fn bump(&mut self, node_id: NodeId, delta: f32) -> f32 {
         let next = (self.score(node_id) + delta).clamp(0.0, 1.0);
-        self.scores.insert(node_id, next);
+        lock_ignoring_poison(&self.scores).insert(node_id, next);
         next
     }
 }

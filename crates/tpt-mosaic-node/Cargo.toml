@@ -29,6 +29,7 @@ real-backends = [
 ]
 
 [dependencies]
+getrandom          = { workspace = true }
 tpt-mosaic-core      = { workspace = true, features = ["std"] }
 tpt-mosaic-proto     = { workspace = true, features = ["std"] }
 tpt-mosaic-discovery = { workspace = true, features = ["mdns"] }

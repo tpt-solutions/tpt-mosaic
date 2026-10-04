@@ -68,7 +68,10 @@ impl MeshDht {
     /// catch up on the next exchange.
     pub fn advertise(&self, advert: PeerAdvert) -> usize {
         let targets: Vec<_> = {
-            let peers = self.peers.lock().expect("peer table poisoned");
+            let peers = self
+                .peers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             peers
                 .live_peers()
                 .filter(|p| p.node_id != advert.node_id)
@@ -86,7 +89,10 @@ impl MeshDht {
 
     /// Live peers with a mesh address (lookup query targets).
     fn targets(&self) -> Vec<std::net::SocketAddr> {
-        let peers = self.peers.lock().expect("peer table poisoned");
+        let peers = self
+            .peers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         peers
             .live_peers()
             .filter(|p| p.node_id != self.self_advert.node_id)
@@ -118,7 +124,10 @@ impl crate::DhtClient for MeshDht {
         // trait signature only carries identity + capabilities, so unknown
         // nodes are announced without hardware details or address.
         let advert = {
-            let peers = self.peers.lock().expect("peer table poisoned");
+            let peers = self
+                .peers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             match peers.get(&node_id) {
                 Some(record) => PeerAdvert {
                     node_id,
@@ -162,7 +171,10 @@ impl crate::DhtClient for MeshDht {
         // Own table first, then every reachable peer's table.
         let mut results: Vec<PeerRecord> = Vec::new();
         {
-            let peers = self.peers.lock().expect("peer table poisoned");
+            let peers = self
+                .peers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             for record in peers.live_peers() {
                 let advert = PeerAdvert {
                     node_id: record.node_id,
@@ -250,11 +262,15 @@ mod tests {
         let running = Arc::new(std::sync::atomic::AtomicBool::new(true));
         let handler: FrameHandler = Arc::new(move |msg| match msg {
             WireMessage::DhtQuery(query) => Some(WireMessage::PeerGossip(answer_query(
-                &table.lock().expect("poisoned"),
+                &table
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
                 query,
             ))),
             WireMessage::PeerGossip(gossip) => {
-                let mut table = table.lock().expect("poisoned");
+                let mut table = table
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 for advert in &gossip.peers {
                     table.upsert(record_from(advert));
                 }
@@ -273,14 +289,14 @@ mod tests {
         let table_b = Arc::new(Mutex::new(PeerTable::new(Duration::from_secs(30))));
         table_b
             .lock()
-            .expect("poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .upsert(record_from(&advert(9, 9, CapabilityFlags::empty())));
         let (b_addr, b_running) = serve(Arc::clone(&table_b));
 
         let table_a = Arc::new(Mutex::new(PeerTable::new(Duration::from_secs(30))));
         table_a
             .lock()
-            .expect("poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .upsert(record_from(&PeerAdvert {
                 addr: Some(b_addr),
                 ..b_advert
@@ -307,12 +323,15 @@ mod tests {
         let table_a = Arc::new(Mutex::new(PeerTable::new(Duration::from_secs(30))));
         table_a
             .lock()
-            .expect("poisoned")
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .upsert(record_from(&advert(9, 9, CapabilityFlags::empty())));
         // Point B's record at its real address for A's announce targets.
         let mut b_record = record_from(&advert(2, 0, CapabilityFlags::CUDA));
         b_record.addr = Some(b_addr);
-        table_a.lock().expect("poisoned").upsert(b_record);
+        table_a
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .upsert(b_record);
 
         let dht = MeshDht::new(
             advert(1, 0, CapabilityFlags::CUDA),
@@ -326,7 +345,7 @@ mod tests {
             wait_for(
                 || table_b
                     .lock()
-                    .expect("poisoned")
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .get(&NodeId::from_bytes([1; 16]))
                     .is_some(),
                 50
@@ -347,7 +366,7 @@ mod tests {
             };
             table
                 .lock()
-                .expect("poisoned")
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .upsert(record_from(&advert(id, id as u16, caps)));
         }
         let dht = MeshDht::new(

@@ -7,6 +7,12 @@ in the root [CHANGELOG.md](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** `SchedulerPolicy::assemble` takes a `reputation` view
+  (`&dyn Fn(NodeId) -> f32`); built-in assemblers prefer higher-reputation
+  peers when hardware diversity ties.
+
 ### Planned
 
 - Energy- and thermal-cost-aware assembler policies (battery drain and

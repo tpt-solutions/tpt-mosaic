@@ -7,6 +7,11 @@ in the root [CHANGELOG.md](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+### Added
+
+- `HashCollector::voters_for(hash)` — the nodes behind a given hash, for
+  paying the winning quorum's contributors.
+
 ### Planned
 
 - Weighted voting so heterogeneous hardware classes carry proportional trust
