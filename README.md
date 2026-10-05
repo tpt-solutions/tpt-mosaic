@@ -60,15 +60,56 @@ categories.
 
 ## Quick Start
 
+Prerequisites: [Rust](https://rustup.rs) 1.80+ (the workspace MSRV) and Git.
+No GPU or special hardware is required — the default compile/execute backends
+are in-tree stubs.
+
+Build the workspace:
+
 ```bash
-# Build the full workspace
+git clone https://github.com/tpt-solutions/tpt-mosaic.git
+cd tpt-mosaic
 cargo build --workspace
+```
 
-# Run all tests
-cargo test --workspace
+Watch a two-node mesh meet a signed 2-of-2 quorum over loopback TCP (no
+configuration needed):
 
-# Run the node daemon (requires node.toml — see node.toml.example)
-cargo run -p tpt-mosaic-node -- --config node.toml
+```bash
+cargo run -p tpt-mosaic-node --example two_node_mesh
+```
+
+```text
+peer discovery complete: hub sees 2 nodes
+task          77b1e24d036b502876f718c048387c20
+agreed hash   8f2d02fb18ba11bf383ce754b51f1408ecae80e5952a60895331eb1394b59226
+confirmations 2 (hub + worker)
+reward        1 micro-units (paid to each contributor)
+worker paid   1 micro-units on the hub's ledger
+```
+
+More runnable examples live in
+[`crates/tpt-mosaic-node/examples/`](crates/tpt-mosaic-node/examples/):
+`hello_quorum` (single-node lifecycle), `submit_job` (control-API client),
+`custom_executor` (the `TaskExecutor` extension point), and `byzantine_demo`
+(divergence detection).
+
+Run a real daemon:
+
+```bash
+cp node.toml.example node.toml   # documented defaults; edit to taste
+cargo run -p tpt-mosaic-node
+# in another terminal, drive the control API:
+printf 'STATUS\nSUBMIT best deadbeef\n' | nc 127.0.0.1 7331
+```
+
+Or start the five-node Docker demo mesh (hub + secondary anchor + three
+edges) and submit a 3-of-5 quorum job across it:
+
+```bash
+docker compose up --build
+# in another terminal:
+printf 'SUBMIT standard deadbeef\n' | nc localhost 7331
 ```
 
 ## Control API

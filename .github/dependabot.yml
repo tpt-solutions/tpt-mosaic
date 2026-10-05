@@ -1,0 +1,20 @@
+version: 2
+updates:
+  # Workspace and per-crate dependencies.
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      rust-deps:
+        patterns:
+          - "*"
+    ignore:
+      # Pinned upstream tpt-* git dependencies are bumped deliberately with a
+      # verified revision (see the comment block in Cargo.toml).
+      - dependency-name: "tpt-*"
+  # CI actions.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly

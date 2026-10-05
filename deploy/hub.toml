@@ -1,0 +1,23 @@
+# Hub node: an anchor that every edge seeds to. Gossip spreads the rest.
+# Used by docker-compose.yml; bind 0.0.0.0 inside containers.
+
+[node]
+kind = "anchor"
+
+[mesh]
+listen_addr = "0.0.0.0"
+listen_port = 7801
+
+[discovery]
+# Fast heartbeats make the demo mesh converge in seconds.
+heartbeat_interval_ms = 2000
+peer_max_age_ms = 10000
+
+# Control API reachable from the host via the compose port mapping.
+# Do NOT bind the control API to 0.0.0.0 on a real deployment.
+[control]
+listen_addr = "0.0.0.0"
+listen_port = 7331
+
+[economy]
+chain = "solana"

@@ -6,6 +6,14 @@ All notable changes to tpt-mosaic are documented here. The format follows
 
 ## [Unreleased]
 
+- Adoption & usability batch: five runnable examples
+  (`hello_quorum`, `two_node_mesh`, `submit_job`, `custom_executor`,
+  `byzantine_demo`) backed by a new `tpt_mosaic_node` library target; a
+  five-node Docker Compose demo mesh with sample configs under `deploy/`;
+  repo hygiene (SECURITY.md, Code of Conduct, issue/PR templates,
+  dependabot, cargo-deny config) and three new CI jobs (MSRV 1.80,
+  cargo-deny, coverage).
+
 ### Added
 
 - Wi-Fi mDNS zero-config LAN discovery (`mdns` feature, `[mesh] mdns = true`):

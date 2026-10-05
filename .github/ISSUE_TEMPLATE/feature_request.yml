@@ -1,0 +1,28 @@
+name: Feature request
+description: Suggest an idea or improvement
+labels: ["enhancement", "triage"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem to solve
+      description: What are you trying to do, and what stands in the way?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What would you like to happen? Alternatives considered?
+    validations:
+      required: true
+  - type: checkboxes
+    id: roadmap
+    attributes:
+      label: Roadmap
+      description: |
+        Check [todo.md](https://github.com/tpt-solutions/tpt-mosaic/blob/master/todo.md)
+        for planned work; late phases cover NAT traversal, TUI, job
+        templates, and energy-aware scheduling.
+      options:
+        - label: I checked the roadmap and this is not already planned

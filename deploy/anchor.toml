@@ -1,0 +1,21 @@
+# Secondary anchor: datacenter ballast seeded to the primary hub, so the
+# quorum always has anchor capacity available (spec §3.2).
+# Used by docker-compose.yml (`mosaic-anchor-*` services).
+
+[node]
+kind = "anchor"
+
+[mesh]
+listen_addr = "0.0.0.0"
+listen_port = 7801
+seeds = ["mosaic-hub:7801"]
+
+[discovery]
+heartbeat_interval_ms = 2000
+peer_max_age_ms = 10000
+
+[control]
+listen_port = 0
+
+[economy]
+chain = "solana"

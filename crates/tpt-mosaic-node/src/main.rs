@@ -4,19 +4,12 @@
 //! Usage: `tpt-mosaic-node [--config <path>]` with a `node.toml`; see
 //! `node.toml.example` for a documented template.
 
-mod config;
-mod control;
-mod daemon;
-mod id;
-#[cfg(test)]
-mod mesh_integration;
-
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use config::NodeConfig;
-use daemon::NodeDaemon;
+use tpt_mosaic_node::config::NodeConfig;
+use tpt_mosaic_node::daemon::NodeDaemon;
 
 const USAGE: &str = "\
 tpt-mosaic-node — decentralized ambient compute node

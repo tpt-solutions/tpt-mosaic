@@ -11,3 +11,4 @@ node.toml
 .DS_Store
 Thumbs.db
 .claude/
+.kilo/

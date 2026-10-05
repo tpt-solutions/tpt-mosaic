@@ -1,0 +1,44 @@
+# Five-node tpt-mosaic demo mesh: one hub anchor, one secondary anchor, and
+# three edge tiles over a compose network, all signing their frames with
+# their own Ed25519 identities.
+#
+#   docker compose up --build
+#   # in another terminal:
+#   printf 'STATUS\nPEERS\nSUBMIT standard deadbeef\n' | nc localhost 7331
+#
+# SUBMIT standard assembles a 3-of-5 quorum across the five nodes.
+services:
+  mosaic-hub:
+    build: .
+    volumes:
+      - ./deploy/hub.toml:/etc/mosaic/node.toml:ro
+    ports:
+      - "7331:7331"
+
+  mosaic-anchor-1:
+    build: .
+    volumes:
+      - ./deploy/anchor.toml:/etc/mosaic/node.toml:ro
+    depends_on:
+      - mosaic-hub
+
+  mosaic-edge-1:
+    build: .
+    volumes:
+      - ./deploy/edge.toml:/etc/mosaic/node.toml:ro
+    depends_on:
+      - mosaic-hub
+
+  mosaic-edge-2:
+    build: .
+    volumes:
+      - ./deploy/edge.toml:/etc/mosaic/node.toml:ro
+    depends_on:
+      - mosaic-hub
+
+  mosaic-edge-3:
+    build: .
+    volumes:
+      - ./deploy/edge.toml:/etc/mosaic/node.toml:ro
+    depends_on:
+      - mosaic-hub

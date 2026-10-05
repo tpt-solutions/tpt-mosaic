@@ -143,12 +143,12 @@ Phase 13 complete.
 
 ## Phase 14 — Adoption & usability
 
-- [ ] `examples/`: `hello_quorum`, `two_node_mesh`, `submit_job`, `custom_executor`, `byzantine_demo`
-- [ ] `Dockerfile` + `docker-compose.yml` 5-node mesh; sample configs (`hub.toml`, `edge.toml`, `anchor.toml`); `just`/`xtask` shortcuts
-- [ ] README Quick Start rewrite (prereqs/MSRV, `cargo install`, two-node demo, expected output, GIF)
+- [x] `examples/`: `hello_quorum`, `two_node_mesh`, `submit_job`, `custom_executor`, `byzantine_demo` (under `crates/tpt-mosaic-node/examples/`, backed by the new lib target)
+- [x] `Dockerfile` + `docker-compose.yml` 5-node mesh (hub, secondary anchor, 3 edges); sample configs (`deploy/hub.toml`, `deploy/edge.toml`, `deploy/anchor.toml`) — `just`/`xtask` shortcuts still open
+- [x] README Quick Start rewrite (prereqs/MSRV, build, two-node demo with expected output, daemon + control API, Docker demo; GIF still open)
 - [ ] `clap` CLI: `--version`, `--check-config`, `init`, `status`, `peers`, `submit`, `result`, `cancel`; `MOSAIC_*` env overrides; config search path; config errors with field/line
 - [ ] Service packaging (systemd, launchd, Windows) + `cargo-dist` release workflow
-- [ ] Repo hygiene: `SECURITY.md`, issue/PR templates, `CODE_OF_CONDUCT.md`, `dependabot.yml`, `deny.toml` + audit job, MSRV job, coverage job, `.kilo/` in `.gitignore`
+- [x] Repo hygiene: `SECURITY.md`, issue/PR templates, `CODE_OF_CONDUCT.md`, `dependabot.yml`, `deny.toml` + audit job, MSRV job, coverage job (summary-only), `.kilo/` in `.gitignore`
 - [ ] crates.io readiness: READMEs for compiler/economy/node/quorum/sandbox/verify/benches, commit untracked READMEs/CHANGELOGs, `version` on path deps, `docs.rs` metadata, `exclude` list, doctests
 - [ ] Black-box tests (`assert_cmd`) for the real node binary; `cargo-fuzz` for proto decoder
 

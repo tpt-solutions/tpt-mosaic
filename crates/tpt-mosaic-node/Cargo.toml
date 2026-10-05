@@ -13,6 +13,10 @@ repository.workspace  = true
 homepage.workspace   = true
 documentation = "https://docs.rs/tpt-mosaic-node"
 
+[lib]
+name = "tpt_mosaic_node"
+path = "src/lib.rs"
+
 [[bin]]
 name = "tpt-mosaic-node"
 path = "src/main.rs"

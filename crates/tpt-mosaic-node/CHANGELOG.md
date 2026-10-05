@@ -7,6 +7,11 @@ in the root [CHANGELOG.md](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+- Library target `tpt_mosaic_node` exposing `config` / `control` /
+  `daemon` / `id`, plus five runnable examples under `examples/`
+  (`hello_quorum`, `two_node_mesh`, `submit_job`, `custom_executor`,
+  `byzantine_demo`).
+
 ### Added
 
 - Ed25519 mesh authentication (wire v3): the node identity is a keypair

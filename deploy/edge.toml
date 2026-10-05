@@ -1,0 +1,23 @@
+# Edge tile: seeds only to the hub; gossip teaches it the rest of the mesh.
+# Used by docker-compose.yml (`mosaic-edge-*` services).
+
+[node]
+kind = "edge"
+
+[mesh]
+listen_addr = "0.0.0.0"
+listen_port = 7801
+seeds = ["mosaic-hub:7801"]
+
+[discovery]
+heartbeat_interval_ms = 2000
+peer_max_age_ms = 10000
+
+[control]
+listen_port = 0
+
+[hardware]
+battery_level = 80
+
+[economy]
+chain = "solana"

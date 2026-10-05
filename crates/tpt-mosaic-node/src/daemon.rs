@@ -1037,8 +1037,8 @@ impl NodeDaemon {
     /// configured seed and every live peer that has a mesh address. The
     /// responder's gossip reply (its own record plus its known peers) is
     /// upserted into the table, so one static seed propagates the full view.
-    /// Targets are contacted in parallel, each bounded by
-    /// [`BEACON_EXCHANGE_TIMEOUT`], so dead peers cannot stretch the round.
+    /// Targets are contacted in parallel, each bounded by the 5 s
+    /// `BEACON_EXCHANGE_TIMEOUT`, so dead peers cannot stretch the round.
     pub fn exchange_beacons(&self) {
         let beacon = self.current_beacon();
         self.broadcaster.broadcast(&beacon).ok();

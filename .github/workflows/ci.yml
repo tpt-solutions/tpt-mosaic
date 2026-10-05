@@ -59,6 +59,37 @@ jobs:
       # The no_std-capable crates: every feature combination must check.
       - run: cargo hack check --each-feature --no-dev-deps -p tpt-mosaic-core -p tpt-mosaic-proto
 
+  msrv:
+    name: MSRV (1.80)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.80
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --workspace --all-targets
+
+  deny:
+    name: cargo-deny (advisories, licenses, bans)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@cargo-deny
+      - run: cargo deny check
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: Swatinem/rust-cache@v2
+      # Summary-only: the gate is "coverage runs clean"; trend tracking on a
+      # coverage service is a follow-up once the repo has a token configured.
+      - run: cargo llvm-cov --workspace --summary-only
+
   external-backends:
     name: External backends (all features)
     runs-on: ubuntu-latest
