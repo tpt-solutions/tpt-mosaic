@@ -3,12 +3,15 @@
 # the defaults applied when a field or whole section is omitted.
 
 [node]
-# 32-hex-character node identity (16 bytes). Leave empty to generate a random
-# identity at startup.
+# 32-hex-character node identity (16 bytes). Leave empty to derive the
+# identity from an Ed25519 keypair (recommended): the node id is then
+# BLAKE3(pubkey)[..16] and all mesh frames are signed and verified.
+# Setting an explicit id is a legacy compatibility mode: frames are sent
+# unsigned and inbound signature verification is disabled.
 id = ""
-# Persist the identity to this file when `id` is empty: the first startup
-# generates and stores it; later restarts reuse it. Leave empty for
-# per-run identities.
+# Persist the Ed25519 seed (64 hex characters) to this file when `id` is
+# empty: the first startup generates the keypair and stores it; later
+# restarts reuse it (same node id). Leave empty for per-run identities.
 state_file = ""
 # Node role in the fabric: "edge" (car / robot / phone / IoT tile) or
 # "anchor" (datacenter ballast running on idle or spot capacity).

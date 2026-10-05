@@ -12,6 +12,15 @@ All notable changes to tpt-mosaic are documented here. The format follows
   nodes advertise under `_mosaic._udp.local.` and feed discovered addresses
   into the beacon/gossip exchange.
 
+- **Ed25519 mesh authentication (wire v3).** Every node identity is an
+  Ed25519 keypair with `NodeId = BLAKE3(pubkey)[..16]`; beacons, task
+  assignments, and result hashes carry the sender's pubkey and a signature
+  over the frame, verified on receipt. Beacons carry a replay nonce and a
+  timestamp: receivers reject repeated nonces, frames outside the freshness
+  window, and result hashes with stale production timestamps. The keypair
+  persists in `[node] state_file` (Ed25519 seed, `0600` on Unix). Setting an
+  explicit `node.id` keeps a legacy unsigned compatibility mode.
+
 - Worker settlement: the coordinator now pays **every** contributor that
   voted for the winning hash (not just itself) and records reputation for
   all winners and Byzantine suspects.

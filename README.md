@@ -106,6 +106,18 @@ multi-node quorums over loopback/LAN TCP (MOSA v2 frames):
 - **Early termination**: once K matching hashes arrive, remaining workers get
   a `CancellationSignal` (spec §3.3).
 
+### Authentication
+
+Every node identity is an Ed25519 keypair, and the node id is derived from it
+(`NodeId = BLAKE3(pubkey)[..16]`), so a claimed identity is bound to the key
+that signs for it. Beacons, task assignments, and result hashes carry the
+sender's public key and a signature (wire v3); receivers verify the binding
+and the signature before trusting a frame. Beacons additionally carry a
+per-sender nonce and timestamp, and replays (repeated nonce) and stale frames
+(outside the freshness window) are rejected. The keypair persists (seed file,
+`0600` on Unix) via `[node] state_file`; setting an explicit `node.id`
+disables signing and verification (legacy compatibility mode).
+
 A hub-and-spoke deployment only needs every node to list the hub as its
 seed; gossip spreads the rest. See the multi-node integration tests in
 `crates/tpt-mosaic-node/src/mesh_integration.rs`.

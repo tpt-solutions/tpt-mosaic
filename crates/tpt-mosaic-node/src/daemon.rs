@@ -24,7 +24,7 @@ use tpt_mosaic_discovery::{
 };
 use tpt_mosaic_economy::chains::{BaseSettlement, NearSettlement, SolanaSettlement};
 use tpt_mosaic_economy::{calculate_reward, Chain, ReputationStore, Settlement};
-use tpt_mosaic_proto::codec::MAX_GOSSIP_PEERS;
+use tpt_mosaic_proto::codec::{encode, MAX_GOSSIP_PEERS};
 use tpt_mosaic_proto::{
     DhtQuery, HeartbeatBeacon, PeerAdvert, PeerGossip, TaskAssignment, WireMessage,
 };
@@ -67,6 +67,19 @@ const CANCELLATION_TTL: Duration = Duration::from_secs(300);
 /// Upper bound on remembered cancellations, keeping the map bounded no
 /// matter how many distinct tasks are cancelled.
 const MAX_CANCELLED_TASKS: usize = 1024;
+
+/// How far into the future a frame timestamp may sit before it is rejected
+/// (tolerated clock skew between peers).
+const CLOCK_SKEW_TOLERANCE_MS: u64 = 60_000;
+
+/// How old a `ResultHash`'s `produced_at_ms` may be: two dispatch waves plus
+/// the mesh RPC budget.
+const RESULT_MAX_AGE_MS: u64 = 50_000;
+
+/// Recent-nonce memory per peer (and peer-map cap) for beacon replay
+/// rejection.
+const BEACON_NONCES_PER_PEER: usize = 64;
+const MAX_NONCE_PEERS: usize = 512;
 
 /// Cumulative daemon counters.
 #[derive(Debug, Default)]
@@ -145,6 +158,14 @@ pub struct NodeDaemon {
     cancelled: Mutex<HashMap<TaskId, Instant>>,
     /// When set, peer reputation scores are loaded from and saved to this file.
     reputation_file: Option<std::path::PathBuf>,
+    /// Ed25519 identity backing `self_id`. `None` only when `node.id` is
+    /// explicitly configured: frames are then sent unsigned and inbound
+    /// authentication is skipped (legacy compatibility mode).
+    identity: Option<id::Identity>,
+    /// Monotonic beacon-nonce counter, randomly seeded at startup.
+    beacon_nonce: AtomicU64,
+    /// Recent beacon nonces per node, for replay rejection.
+    seen_nonces: Mutex<HashMap<NodeId, Vec<u64>>>,
 }
 
 /// Keeps the mesh accept-loop alive; stops it on drop.
@@ -169,19 +190,32 @@ impl NodeDaemon {
     /// the mesh listener (when `[mesh]` is configured) so
     /// [`NodeDaemon::mesh_addr`] is known before [`NodeDaemon::run`] starts.
     pub fn new(config: NodeConfig) -> Self {
-        let self_id = match config.identity.id {
-            Some(id) => id,
-            None => match &config.identity.state_file {
-                Some(path) => id::load_or_create(path).unwrap_or_else(|e| {
-                    tracing::warn!(
-                        path = %path.display(),
-                        error = %e,
-                        "identity state file unusable; using a random id"
-                    );
-                    id::generate_node_id()
-                }),
-                None => id::generate_node_id(),
-            },
+        // Identity: an Ed25519 keypair whose pubkey hash is the node id,
+        // persisted as a seed when `[node] state_file` is configured. An
+        // explicitly configured `node.id` overrides the derived id and
+        // downgrades to unsigned frames (the key then cannot bind to the id).
+        let (self_id, identity) = match config.identity.id {
+            Some(explicit) => {
+                tracing::warn!(
+                    "node.id is explicitly configured; mesh frames are sent unsigned \
+                     and inbound signature verification is disabled"
+                );
+                (explicit, None)
+            }
+            None => {
+                let identity = match &config.identity.state_file {
+                    Some(path) => id::Identity::load_or_create(path).unwrap_or_else(|e| {
+                        tracing::warn!(
+                            path = %path.display(),
+                            error = %e,
+                            "identity state file unusable; using an ephemeral keypair"
+                        );
+                        id::Identity::generate()
+                    }),
+                    None => id::Identity::generate(),
+                };
+                (identity.node_id(), Some(identity))
+            }
         };
         let peer_max_age = config.discovery.peer_max_age;
         let jit = config.jit_cache.as_deref().map(compiler::JitCache::new);
@@ -248,6 +282,13 @@ impl NodeDaemon {
             stats: Arc::new(Stats::default()),
             cancelled: Mutex::new(HashMap::new()),
             reputation_file: reputation_path,
+            identity,
+            beacon_nonce: AtomicU64::new({
+                let mut seed = [0u8; 8];
+                getrandom::fill(&mut seed).expect("OS entropy source is unavailable");
+                u64::from_le_bytes(seed)
+            }),
+            seen_nonces: Mutex::new(HashMap::new()),
         }
     }
 
@@ -588,13 +629,18 @@ impl NodeDaemon {
         };
         let mut tracker = DispatchTracker::new();
         let mut dispatched: Vec<(NodeId, SocketAddr)> = Vec::new();
-        let assignment = TaskAssignment {
+        // Sign the assignment once; every wave dispatches a clone of the
+        // signed frame.
+        let mut assignment_frame = WireMessage::TaskAssignment(TaskAssignment {
             task_id,
             quorum_config: quorum,
             payload: payload.to_vec(),
             deadline_ms: now_ms() + MESH_DISPATCH_TIMEOUT.as_millis() as u64,
             coordinator,
-        };
+            pubkey: [0; 32],
+            signature: [0; 64],
+        });
+        self.auth_wire(&mut assignment_frame);
 
         // Up to three waves: dispatch, collect, replace the stragglers.
         for _wave in 0..3 {
@@ -609,7 +655,7 @@ impl NodeDaemon {
             let handles: Vec<_> = pending
                 .iter()
                 .map(|(_, addr)| {
-                    let frame = WireMessage::TaskAssignment(assignment.clone());
+                    let frame = assignment_frame.clone();
                     let addr = *addr;
                     std::thread::spawn(move || {
                         TcpMesh::exchange(addr, &frame, MESH_DISPATCH_TIMEOUT).and_then(|reply| {
@@ -625,14 +671,30 @@ impl NodeDaemon {
             let mut missing: Vec<NodeId> = Vec::new();
             for ((node, _), handle) in pending.drain(..).zip(handles) {
                 match handle.join() {
-                    // A reply only counts if it answers this task and comes
-                    // from the node that was dialed; anything else is a
-                    // spoofed or stale vote and the node counts as missing.
+                    // A reply only counts if it answers this task, comes from
+                    // the node that was dialed, carries a valid signature
+                    // binding it to that node, and is fresh; anything else is
+                    // spoofed, stale, or replayed and counts as missing.
                     Ok(Some(rh)) if rh.task_id == task_id && rh.node_id == node => {
-                        collector.submit(node, rh.hash);
-                        replied.push(node);
-                        got += 1;
-                        tracker.complete(node);
+                        if let Err(reason) = self.verify_wire(&WireMessage::ResultHash(rh)) {
+                            tracing::warn!(
+                                peer = %id::to_hex(node.as_bytes()),
+                                reason,
+                                "rejected unauthenticated result hash"
+                            );
+                            missing.push(node);
+                        } else if !result_is_fresh(rh.produced_at_ms) {
+                            tracing::warn!(
+                                peer = %id::to_hex(node.as_bytes()),
+                                "rejected result hash with a stale timestamp"
+                            );
+                            missing.push(node);
+                        } else {
+                            collector.submit(node, rh.hash);
+                            replied.push(node);
+                            got += 1;
+                            tracker.complete(node);
+                        }
                     }
                     _ => missing.push(node),
                 }
@@ -703,6 +765,21 @@ impl NodeDaemon {
     fn handle_mesh_frame(&self, msg: &WireMessage) -> Option<WireMessage> {
         match msg {
             WireMessage::HeartbeatBeacon(beacon) => {
+                if let Err(reason) = self.verify_wire(msg) {
+                    tracing::warn!(
+                        peer = %id::to_hex(beacon.node_id.as_bytes()),
+                        reason,
+                        "rejected unauthenticated beacon"
+                    );
+                    return None;
+                }
+                if !self.beacon_is_fresh(beacon) {
+                    tracing::debug!(
+                        peer = %id::to_hex(beacon.node_id.as_bytes()),
+                        "rejected stale or replayed beacon"
+                    );
+                    return None;
+                }
                 self.upsert_advert(PeerAdvert {
                     node_id: beacon.node_id,
                     addr: beacon.addr,
@@ -718,6 +795,10 @@ impl NodeDaemon {
                 // Execute inline on the connection thread; the stub workload
                 // path is fast, and the coordinator's read timeout bounds us.
                 let task_hex = id::to_hex(assignment.task_id.as_bytes());
+                if let Err(reason) = self.verify_wire(msg) {
+                    tracing::warn!(task = %task_hex, reason, "rejected unauthenticated assignment");
+                    return None;
+                }
                 if self.is_cancelled(assignment.task_id) {
                     tracing::info!(task = %task_hex, "mesh assignment refused: task cancelled");
                     return None;
@@ -729,12 +810,16 @@ impl NodeDaemon {
                 tracing::info!(task = %task_hex, "mesh assignment received");
                 match self.execute_locally(assignment.task_id, &assignment.payload) {
                     Ok((hash, _shards)) => {
-                        Some(WireMessage::ResultHash(tpt_mosaic_proto::ResultHash {
+                        let mut reply = WireMessage::ResultHash(tpt_mosaic_proto::ResultHash {
                             task_id: assignment.task_id,
                             node_id: self.self_id,
                             hash,
                             produced_at_ms: now_ms(),
-                        }))
+                            pubkey: [0; 32],
+                            signature: [0; 64],
+                        });
+                        self.auth_wire(&mut reply);
+                        Some(reply)
                     }
                     Err(e) => {
                         tracing::warn!(task = %task_hex, error = %e, "mesh assignment failed");
@@ -784,6 +869,87 @@ impl NodeDaemon {
         let mut cancelled = lock_ok(&self.cancelled);
         prune_cancelled(&mut cancelled);
         cancelled.contains_key(&task_id)
+    }
+
+    /// Fill the authentication fields of an outgoing frame and sign it. In
+    /// unsigned mode (explicit `node.id`), the fields stay zeroed.
+    fn auth_wire(&self, msg: &mut WireMessage) {
+        let Some(identity) = &self.identity else {
+            return;
+        };
+        let pubkey = identity.pubkey();
+        match msg {
+            WireMessage::HeartbeatBeacon(beacon) => beacon.pubkey = pubkey,
+            WireMessage::TaskAssignment(assignment) => assignment.pubkey = pubkey,
+            WireMessage::ResultHash(result) => result.pubkey = pubkey,
+            _ => return,
+        }
+        zero_signature(msg);
+        let signature = identity.sign(&encode(msg));
+        if let Some(field) = signature_field_mut(msg) {
+            *field = signature.to_bytes();
+        }
+    }
+
+    /// Authenticate an inbound frame: the pubkey must hash to the claimed
+    /// node id (assignments carry no node id, so there only the signature's
+    /// proof-of-possession is checked) and the Ed25519 signature must verify
+    /// over the frame with the signature field zeroed. Unsigned mode accepts
+    /// every frame; signed mode rejects zeroed auth fields (an all-zero
+    /// pubkey never hashes to a real node id).
+    fn verify_wire(&self, msg: &WireMessage) -> Result<(), &'static str> {
+        let Some(_) = &self.identity else {
+            return Ok(());
+        };
+        let (claimed_id, pubkey, signature) = match msg {
+            WireMessage::HeartbeatBeacon(beacon) => {
+                (Some(beacon.node_id), beacon.pubkey, beacon.signature)
+            }
+            WireMessage::ResultHash(result) => {
+                (Some(result.node_id), result.pubkey, result.signature)
+            }
+            WireMessage::TaskAssignment(assignment) => {
+                (None, assignment.pubkey, assignment.signature)
+            }
+            _ => return Ok(()),
+        };
+        if let Some(node_id) = claimed_id {
+            if id::node_id_for_pubkey(&pubkey) != node_id {
+                return Err("pubkey does not hash to the claimed node id");
+            }
+        }
+        let mut unsigned = msg.clone();
+        zero_signature(&mut unsigned);
+        if !id::Identity::verify(&pubkey, &encode(&unsigned), &signature) {
+            return Err("signature does not verify");
+        }
+        Ok(())
+    }
+
+    /// Beacon freshness: the timestamp must sit inside the acceptance window
+    /// (four heartbeat intervals, floored at 30 s, plus tolerated skew) and
+    /// the nonce must be one this peer has not used recently.
+    fn beacon_is_fresh(&self, beacon: &HeartbeatBeacon) -> bool {
+        let now = now_ms();
+        let max_age = (self.config.discovery.heartbeat_interval.as_millis() as u64 * 4).max(30_000);
+        if beacon.timestamp_ms + max_age < now
+            || beacon.timestamp_ms > now + CLOCK_SKEW_TOLERANCE_MS
+        {
+            return false;
+        }
+        let mut seen = lock_ok(&self.seen_nonces);
+        if seen.len() >= MAX_NONCE_PEERS && !seen.contains_key(&beacon.node_id) {
+            seen.clear();
+        }
+        let nonces = seen.entry(beacon.node_id).or_default();
+        if nonces.contains(&beacon.nonce) {
+            return false;
+        }
+        if nonces.len() >= BEACON_NONCES_PER_PEER {
+            nonces.remove(0);
+        }
+        nonces.push(beacon.nonce);
+        true
     }
 
     /// Insert or refresh a peer record from an advertisement.
@@ -935,14 +1101,24 @@ impl NodeDaemon {
         }
     }
 
-    /// Build the heartbeat beacon for this node as of now.
+    /// Build the heartbeat beacon for this node as of now: fresh timestamp,
+    /// next replay nonce, and (in signed mode) our pubkey and signature.
     fn current_beacon(&self) -> HeartbeatBeacon {
-        HeartbeatBeacon {
+        let nonce = self.beacon_nonce.fetch_add(1, Ordering::Relaxed);
+        let mut frame = WireMessage::HeartbeatBeacon(HeartbeatBeacon {
             node_id: self.self_id,
             hardware: self.config.hardware,
             capabilities: self.config.capabilities,
             timestamp_ms: now_ms(),
             addr: self.mesh_addr(),
+            nonce,
+            pubkey: [0; 32],
+            signature: [0; 64],
+        });
+        self.auth_wire(&mut frame);
+        match frame {
+            WireMessage::HeartbeatBeacon(beacon) => beacon,
+            _ => unreachable!("constructed as a beacon above"),
         }
     }
 
@@ -1104,6 +1280,30 @@ fn prune_cancelled(cancelled: &mut HashMap<TaskId, Instant>) {
     cancelled.retain(|_, seen| now.duration_since(*seen) < CANCELLATION_TTL);
 }
 
+/// Mutable access to a frame's `signature` field, for signing and zeroing.
+fn signature_field_mut(msg: &mut WireMessage) -> Option<&mut [u8; 64]> {
+    match msg {
+        WireMessage::HeartbeatBeacon(beacon) => Some(&mut beacon.signature),
+        WireMessage::TaskAssignment(assignment) => Some(&mut assignment.signature),
+        WireMessage::ResultHash(result) => Some(&mut result.signature),
+        _ => None,
+    }
+}
+
+/// Zero a frame's `signature` field (the canonical pre-signing encoding).
+fn zero_signature(msg: &mut WireMessage) {
+    if let Some(field) = signature_field_mut(msg) {
+        *field = [0; 64];
+    }
+}
+
+/// `true` when a result's production timestamp sits inside the acceptance
+/// window (bounded age, bounded future skew).
+fn result_is_fresh(produced_at_ms: u64) -> bool {
+    let now = now_ms();
+    produced_at_ms + RESULT_MAX_AGE_MS >= now && produced_at_ms <= now + CLOCK_SKEW_TOLERANCE_MS
+}
+
 /// `true` for addresses that could plausibly identify a reachable peer:
 /// rejects unspecified (0.0.0.0/::), broadcast, and multicast targets.
 /// Loopback stays valid — tests and single-host meshes use it.
@@ -1129,6 +1329,7 @@ impl BeaconBroadcaster for TracingBroadcaster {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ed25519_dalek::Signer;
     use tpt_mosaic_core::QuorumConfig;
 
     fn test_daemon() -> NodeDaemon {
@@ -1287,34 +1488,107 @@ checkpoint_dir = {:?}",
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Build a properly signed assignment (worker-side checks are
+    /// proof-of-possession, so any keypair works).
+    fn signed_assignment(task_id: TaskId, deadline_ms: u64) -> WireMessage {
+        let mut frame = WireMessage::TaskAssignment(TaskAssignment {
+            task_id,
+            quorum_config: QuorumConfig::BEST_EFFORT_1_OF_1,
+            payload: b"payload".to_vec(),
+            deadline_ms,
+            coordinator: SocketAddr::from(([127, 0, 0, 1], 1)),
+            pubkey: [0; 32],
+            signature: [0; 64],
+        });
+        let signing = ed25519_dalek::SigningKey::from_bytes(&[9u8; 32]);
+        if let WireMessage::TaskAssignment(assignment) = &mut frame {
+            assignment.pubkey = signing.verifying_key().to_bytes();
+        }
+        let signature = signing.sign(&encode(&frame));
+        if let Some(field) = signature_field_mut(&mut frame) {
+            *field = signature.to_bytes();
+        }
+        frame
+    }
+
     #[test]
     fn expired_and_cancelled_assignments_are_refused() {
         let daemon = test_daemon();
         let task_id = id::generate_task_id();
-        let assignment = TaskAssignment {
-            task_id,
-            quorum_config: QuorumConfig::BEST_EFFORT_1_OF_1,
-            payload: b"payload".to_vec(),
-            deadline_ms: 0, // long past
-            coordinator: SocketAddr::from(([127, 0, 0, 1], 1)),
-        };
+        let expired = signed_assignment(task_id, 0); // long past
         assert!(
-            daemon
-                .handle_mesh_frame(&WireMessage::TaskAssignment(assignment.clone()))
-                .is_none(),
+            daemon.handle_mesh_frame(&expired).is_none(),
             "an assignment past its deadline must not execute"
         );
 
         // After a cancellation notice the task stays refused even with a
         // live deadline (late/reordered dispatch).
         daemon.record_cancellation(task_id);
-        let live = TaskAssignment {
-            deadline_ms: now_ms() + 10_000,
-            ..assignment
-        };
+        let live = signed_assignment(task_id, now_ms() + 10_000);
+        assert!(daemon.handle_mesh_frame(&live).is_none());
+
+        // A control: the same task unsigned (fresh id) executes and replies.
+        let fresh = signed_assignment(id::generate_task_id(), now_ms() + 10_000);
+        assert!(
+            daemon.handle_mesh_frame(&fresh).is_some(),
+            "a well-signed live assignment must execute"
+        );
+    }
+
+    #[test]
+    fn unauthenticated_and_replayed_frames_are_rejected() {
+        let daemon = test_daemon();
+
+        // A beacon whose pubkey does not hash to its claimed node id is
+        // rejected even with a valid signature from that key.
+        let signing = ed25519_dalek::SigningKey::from_bytes(&[5u8; 32]);
+        let mut forged = daemon.current_beacon();
+        forged.node_id = NodeId::from_bytes([3; 16]); // not hash(pubkey)
+        forged.pubkey = signing.verifying_key().to_bytes();
+        forged.signature = [0; 64];
+        let signature = signing.sign(&encode(&WireMessage::HeartbeatBeacon(forged)));
+        forged.signature = signature.to_bytes();
         assert!(daemon
-            .handle_mesh_frame(&WireMessage::TaskAssignment(live))
-            .is_none());
+            .verify_wire(&WireMessage::HeartbeatBeacon(forged))
+            .is_err());
+
+        // A badly signed beacon (right key binding, wrong signature) is
+        // rejected.
+        let mut bad_sig = daemon.current_beacon();
+        bad_sig.signature = [7; 64];
+        assert!(daemon
+            .verify_wire(&WireMessage::HeartbeatBeacon(bad_sig))
+            .is_err());
+
+        // Replay: the first beacon from a peer is fresh; an identical repeat
+        // (same nonce) must be refused.
+        let peer = ed25519_dalek::SigningKey::from_bytes(&[6u8; 32]);
+        let peer_id = id::node_id_for_pubkey(&peer.verifying_key().to_bytes());
+        let mk_beacon = |nonce: u64| {
+            let mut beacon = HeartbeatBeacon {
+                node_id: peer_id,
+                hardware: daemon.config.hardware,
+                capabilities: daemon.config.capabilities,
+                timestamp_ms: now_ms(),
+                addr: Some(SocketAddr::from(([127, 0, 0, 1], 7000))),
+                nonce,
+                pubkey: peer.verifying_key().to_bytes(),
+                signature: [0; 64],
+            };
+            let signature = peer.sign(&encode(&WireMessage::HeartbeatBeacon(beacon)));
+            beacon.signature = signature.to_bytes();
+            beacon
+        };
+        assert!(daemon.beacon_is_fresh(&mk_beacon(1)));
+        assert!(
+            !daemon.beacon_is_fresh(&mk_beacon(1)),
+            "a repeated nonce must be refused"
+        );
+
+        // A stale timestamp is refused (window floor is 30 s).
+        let mut stale = mk_beacon(2);
+        stale.timestamp_ms = now_ms().saturating_sub(400_000);
+        assert!(!daemon.beacon_is_fresh(&stale));
     }
 
     #[test]

@@ -29,6 +29,8 @@ real-backends = [
 ]
 
 [dependencies]
+blake3             = { workspace = true }
+ed25519-dalek      = { workspace = true }
 getrandom          = { workspace = true }
 tpt-mosaic-core      = { workspace = true, features = ["std"] }
 tpt-mosaic-proto     = { workspace = true, features = ["std"] }

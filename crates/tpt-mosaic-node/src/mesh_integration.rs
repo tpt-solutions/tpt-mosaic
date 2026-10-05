@@ -261,9 +261,10 @@ fn ledger_and_reputation_persist_across_restarts() {
     let dir = std::env::temp_dir().join(format!("mosaic-econ-{}", std::process::id()));
     let state = dir.join("ledger.bin");
     let rep = dir.join("reputation.bin");
+    let id_state = dir.join("node.id");
     let config = NodeConfig::from_toml_str(&format!(
-        "[node]\nid = \"00112233445566778899aabbccddeeff\"\n\n[mesh]\nlisten_port = 0\n\n[economy]\nstate_file = {:?}\nreputation_file = {:?}",
-        state, rep
+        "[node]\nstate_file = {:?}\n\n[mesh]\nlisten_port = 0\n\n[economy]\nstate_file = {:?}\nreputation_file = {:?}",
+        id_state, state, rep
     ))
     .expect("valid economy config");
 

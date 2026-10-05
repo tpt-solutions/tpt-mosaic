@@ -217,20 +217,24 @@ fn encode_task_assignment(m: &TaskAssignment) -> Vec<u8> {
     out.extend_from_slice(&(m.payload.len() as u32).to_le_bytes());
     out.extend_from_slice(&m.payload);
     encode_socket(&mut out, &m.coordinator);
+    out.extend_from_slice(&m.pubkey);
+    out.extend_from_slice(&m.signature);
     out
 }
 
 fn encode_result_hash(m: &ResultHash) -> Vec<u8> {
-    let mut out = Vec::with_capacity(72);
+    let mut out = Vec::with_capacity(72 + 96);
     out.extend_from_slice(m.task_id.as_bytes());
     out.extend_from_slice(m.node_id.as_bytes());
     out.extend_from_slice(&m.hash);
     out.extend_from_slice(&m.produced_at_ms.to_le_bytes());
+    out.extend_from_slice(&m.pubkey);
+    out.extend_from_slice(&m.signature);
     out
 }
 
 fn encode_heartbeat(m: &HeartbeatBeacon) -> Vec<u8> {
-    let mut out = Vec::with_capacity(38 + 23);
+    let mut out = Vec::with_capacity(38 + 23 + 104);
     out.extend_from_slice(m.node_id.as_bytes());
     encode_hardware_block(&mut out, &m.hardware, m.capabilities);
     out.extend_from_slice(&m.timestamp_ms.to_le_bytes());
@@ -240,6 +244,9 @@ fn encode_heartbeat(m: &HeartbeatBeacon) -> Vec<u8> {
             encode_socket(&mut out, addr);
         }
     }
+    out.extend_from_slice(&m.nonce.to_le_bytes());
+    out.extend_from_slice(&m.pubkey);
+    out.extend_from_slice(&m.signature);
     out
 }
 
@@ -296,8 +303,9 @@ fn encode_dht_query(m: &DhtQuery) -> Vec<u8> {
 // ── Payload parsers ───────────────────────────────────────────────────────────
 
 fn parse_task_assignment(p: &[u8]) -> Result<TaskAssignment, MosaicError> {
-    if p.len() < 31 + 7 {
-        // 31-byte fixed prefix + smallest possible coordinator (IPv4).
+    // 31-byte fixed prefix + smallest coordinator (IPv4) + auth tail (96).
+    const MIN_LEN: usize = 31 + 7 + 96;
+    if p.len() < MIN_LEN {
         return Err(MosaicError::SerializationError);
     }
     let tier = parse_tier(p[18])?;
@@ -313,7 +321,7 @@ fn parse_task_assignment(p: &[u8]) -> Result<TaskAssignment, MosaicError> {
         .get(31..payload_end)
         .ok_or(MosaicError::SerializationError)?;
     let (coordinator, end) = parse_socket(p, payload_end)?;
-    if p.len() != end {
+    if p.len() != end + 96 {
         return Err(MosaicError::SerializationError);
     }
     Ok(TaskAssignment {
@@ -322,11 +330,14 @@ fn parse_task_assignment(p: &[u8]) -> Result<TaskAssignment, MosaicError> {
         deadline_ms: u64::from_le_bytes(p[19..27].try_into().expect("8 bytes")),
         payload: payload.to_vec(),
         coordinator,
+        pubkey: p[end..end + 32].try_into().expect("32 bytes"),
+        signature: p[end + 32..end + 96].try_into().expect("64 bytes"),
     })
 }
 
 fn parse_result_hash(p: &[u8]) -> Result<ResultHash, MosaicError> {
-    if p.len() != 72 {
+    // 72-byte fixed prefix + pubkey (32) + signature (64).
+    if p.len() != 72 + 96 {
         return Err(MosaicError::SerializationError);
     }
     Ok(ResultHash {
@@ -334,35 +345,44 @@ fn parse_result_hash(p: &[u8]) -> Result<ResultHash, MosaicError> {
         node_id: NodeId::from_bytes(p[16..32].try_into().expect("16 bytes")),
         hash: p[32..64].try_into().expect("32 bytes"),
         produced_at_ms: u64::from_le_bytes(p[64..72].try_into().expect("8 bytes")),
+        pubkey: p[72..104].try_into().expect("32 bytes"),
+        signature: p[104..168].try_into().expect("64 bytes"),
     })
 }
 
 fn parse_heartbeat(p: &[u8]) -> Result<HeartbeatBeacon, MosaicError> {
-    if p.len() < 38 + 1 {
+    // 38-byte fixed prefix + smallest addr tag (1 = absent) + auth tail
+    // (nonce 8 + pubkey 32 + signature 64 = 104).
+    const TAIL_LEN: usize = 104;
+    if p.len() < 38 + 1 + TAIL_LEN {
         return Err(MosaicError::SerializationError);
     }
     let (hardware, capabilities) = parse_hardware_block(p, 16)?;
     let addr = match p.get(38) {
         Some(0) | None => {
-            if p.len() != 39 {
+            if p.len() != 39 + TAIL_LEN {
                 return Err(MosaicError::SerializationError);
             }
             None
         }
         Some(_) => {
             let (addr, end) = parse_socket(p, 38)?;
-            if p.len() != end {
+            if p.len() != end + TAIL_LEN {
                 return Err(MosaicError::SerializationError);
             }
             Some(addr)
         }
     };
+    let tail = p.len() - TAIL_LEN;
     Ok(HeartbeatBeacon {
         node_id: NodeId::from_bytes(p[0..16].try_into().expect("16 bytes")),
         hardware,
         capabilities,
         timestamp_ms: u64::from_le_bytes(p[30..38].try_into().expect("8 bytes")),
         addr,
+        nonce: u64::from_le_bytes(p[tail..tail + 8].try_into().expect("8 bytes")),
+        pubkey: p[tail + 8..tail + 40].try_into().expect("32 bytes"),
+        signature: p[tail + 40..tail + 104].try_into().expect("64 bytes"),
     })
 }
 
@@ -529,6 +549,9 @@ mod tests {
                 | CapabilityFlags::CPU_VECTOR,
             timestamp_ms: 1_700_000_000_123,
             addr: Some(SocketAddr::from(([127, 0, 0, 1], 7745))),
+            nonce: 0x0102_0304_0506_0708,
+            pubkey: [0x44; 32],
+            signature: [0x66; 64],
         }
     }
 
@@ -559,12 +582,16 @@ mod tests {
                 payload,
                 deadline_ms: 1_700_000_100_000,
                 coordinator: SocketAddr::from(([192, 168, 1, 7], 7331)),
+                pubkey: [0x11; 32],
+                signature: [0x22; 64],
             }),
             WireMessage::ResultHash(ResultHash {
                 task_id: TaskId::from_bytes([2; 16]),
                 node_id: NodeId::from_bytes([3; 16]),
                 hash: [0x55; 32],
                 produced_at_ms: 42,
+                pubkey: [0x33; 32],
+                signature: [0x44; 64],
             }),
             WireMessage::HeartbeatBeacon(sample_beacon()),
             cancellation(4, CancellationReason::Timeout),
@@ -596,6 +623,8 @@ mod tests {
             payload: Bytes::new(),
             deadline_ms: 0,
             coordinator: "[::1]:7331".parse().expect("valid v6 socket addr"),
+            pubkey: [0; 32],
+            signature: [0; 64],
         });
         assert_eq!(decode(&encode(&assignment)).unwrap(), assignment);
     }
@@ -673,6 +702,8 @@ mod tests {
             payload: Bytes::new(),
             deadline_ms: 0,
             coordinator: SocketAddr::from(([127, 0, 0, 1], 7331)),
+            pubkey: [0; 32],
+            signature: [0; 64],
         })
     }
 
@@ -684,6 +715,8 @@ mod tests {
             payload: Bytes::new(),
             deadline_ms: 0,
             coordinator: SocketAddr::from(([127, 0, 0, 1], 7331)),
+            pubkey: [0; 32],
+            signature: [0; 64],
         });
         assert_eq!(decode(&encode(&assignment)).unwrap(), assignment);
     }
@@ -735,9 +768,10 @@ mod tests {
         assert_eq!(decode(&frame), Err(MosaicError::SerializationError));
 
         // Unknown socket-address family on the coordinator (family byte sits
-        // 7 bytes from the end of an IPv4-encoded assignment).
+        // 7 bytes from the end of the address block, followed by the 96-byte
+        // auth tail).
         let mut frame = encode(&assignment);
-        let family_at = frame.len() - 7;
+        let family_at = frame.len() - 7 - 96;
         frame[family_at] = 9;
         assert_eq!(decode(&frame), Err(MosaicError::SerializationError));
 

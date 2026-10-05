@@ -20,6 +20,10 @@ pub struct TaskAssignment {
     pub deadline_ms: u64,
     /// Mesh address the worker must send its [`ResultHash`] to.
     pub coordinator: SocketAddr,
+    /// Ed25519 public key of the coordinator (all-zero in unsigned mode).
+    pub pubkey: [u8; 32],
+    /// Ed25519 signature over the encoded frame with this field zeroed.
+    pub signature: [u8; 64],
 }
 
 /// Submitted by a node after completing execution.
@@ -33,6 +37,10 @@ pub struct ResultHash {
     pub hash: [u8; 32],
     /// Unix timestamp (milliseconds) of result production.
     pub produced_at_ms: u64,
+    /// Ed25519 public key of the producing node (all-zero in unsigned mode).
+    pub pubkey: [u8; 32],
+    /// Ed25519 signature over the encoded frame with this field zeroed.
+    pub signature: [u8; 64],
 }
 
 /// Periodic liveness and capability advertisement broadcast by every node.
@@ -49,6 +57,13 @@ pub struct HeartbeatBeacon {
     /// The advertiser's mesh listen address, when it accepts mesh
     /// connections. Peers learn where to send assignments from this.
     pub addr: Option<SocketAddr>,
+    /// Sender-chosen replay nonce; receivers reject beacons repeating a
+    /// recent nonce from the same node.
+    pub nonce: u64,
+    /// Ed25519 public key of the advertiser (all-zero in unsigned mode).
+    pub pubkey: [u8; 32],
+    /// Ed25519 signature over the encoded frame with this field zeroed.
+    pub signature: [u8; 64],
 }
 
 /// Broadcast by the quorum coordinator once K matching hashes are received.

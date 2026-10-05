@@ -9,6 +9,13 @@ in the root [CHANGELOG.md](../../CHANGELOG.md).
 
 ### Changed
 
+- **Breaking (wire v3):** `TaskAssignment`, `ResultHash`, and
+  `HeartbeatBeacon` gained `pubkey` (32 B) and `signature` (64 B) fields,
+  and beacons a `nonce` (8 B); frame payloads grew accordingly and the
+  parsers enforce the new exact bounds.
+
+### Changed
+
 - `read_frame` no longer pre-allocates the announced payload size; the
   buffer grows with the bytes that actually arrive, so a lying header
   cannot force a 16 MiB allocation. Short frames now fail with

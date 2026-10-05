@@ -9,6 +9,16 @@ in the root [CHANGELOG.md](../../CHANGELOG.md).
 
 ### Added
 
+- Ed25519 mesh authentication (wire v3): the node identity is a keypair
+  with `NodeId = BLAKE3(pubkey)[..16]`, persisted as a seed in
+  `[node] state_file` (0600 on Unix). Outgoing beacons, assignments, and
+  result hashes are signed; inbound frames are verified (pubkey-to-id
+  binding plus signature), and stale timestamps, repeated beacons nonces,
+  and stale result timestamps are rejected. An explicit `node.id` selects
+  a legacy unsigned compatibility mode.
+
+### Added
+
 - Worker settlement: every contributor voting for the winning hash is paid,
   and reputation records winners up / Byzantine suspects down; slashed
   peers are excluded from assembly.

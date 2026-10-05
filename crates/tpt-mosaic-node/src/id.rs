@@ -1,5 +1,6 @@
-//! Node/task identity generation and hex encoding helpers.
+//! Node/task identity generation, Ed25519 key management, and hex helpers.
 
+use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use tpt_mosaic_core::{NodeId, TaskId};
 
 /// Generate 16 bytes from the operating system's CSPRNG. Node and task IDs
@@ -14,34 +15,94 @@ pub fn generate_bytes() -> [u8; 16] {
     out
 }
 
-/// Generate a fresh random [`NodeId`].
-pub fn generate_node_id() -> NodeId {
-    NodeId::from_bytes(generate_bytes())
-}
-
 /// Generate a fresh random [`TaskId`].
 pub fn generate_task_id() -> TaskId {
     TaskId::from_bytes(generate_bytes())
 }
 
-/// Load a persisted identity from `path`, generating and storing a fresh
-/// one when the file is missing or unreadable. Best-effort: if the write
-/// fails, the generated ID is still returned — it just will not survive
-/// restarts.
-pub fn load_or_create(path: &std::path::Path) -> std::io::Result<NodeId> {
-    if let Ok(text) = std::fs::read_to_string(path) {
-        if let Some(bytes) = parse_hex16(text.trim()) {
-            return Ok(NodeId::from_bytes(bytes));
+/// A node's cryptographic identity: an Ed25519 signing key whose public-key
+/// hash *is* the [`NodeId`] (`NodeId = BLAKE3(pubkey)[..16]`), so a claimed
+/// identity can always be checked against the key that signed for it.
+#[derive(Debug, Clone)]
+pub struct Identity {
+    signing_key: SigningKey,
+    node_id: NodeId,
+}
+
+impl Identity {
+    /// Derive an identity from an existing signing key.
+    pub fn from_signing_key(signing_key: SigningKey) -> Self {
+        let node_id = node_id_for_pubkey(&signing_key.verifying_key().to_bytes());
+        Self {
+            signing_key,
+            node_id,
         }
     }
-    let id = generate_node_id();
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)?;
-        }
+
+    /// Generate a fresh identity from OS entropy.
+    pub fn generate() -> Self {
+        let mut seed = [0u8; 32];
+        getrandom::fill(&mut seed).expect("OS entropy source is unavailable");
+        Self::from_signing_key(SigningKey::from_bytes(&seed))
     }
-    write_private(path, &to_hex(id.as_bytes()))?;
-    Ok(id)
+
+    /// Load a persisted identity from `path` (64 hex characters: the Ed25519
+    /// seed), generating and storing a fresh one when the file is missing or
+    /// unreadable. Best-effort: if the write fails, the generated identity is
+    /// still returned — it just will not survive restarts.
+    ///
+    /// A file holding a legacy 16-byte identity (pre-Ed25519 format) is
+    /// treated as absent: a fresh keypair is generated and overwrites it.
+    pub fn load_or_create(path: &std::path::Path) -> std::io::Result<Self> {
+        if let Ok(text) = std::fs::read_to_string(path) {
+            if let Some(seed) = parse_hex32(text.trim()) {
+                return Ok(Self::from_signing_key(SigningKey::from_bytes(&seed)));
+            }
+        }
+        let identity = Self::generate();
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+        write_private(path, &to_hex(&identity.signing_key.to_bytes()))?;
+        Ok(identity)
+    }
+
+    /// This identity's node id: `BLAKE3(pubkey)[..16]`.
+    pub fn node_id(&self) -> NodeId {
+        self.node_id
+    }
+
+    /// The Ed25519 verifying (public) key bytes.
+    pub fn pubkey(&self) -> [u8; 32] {
+        self.signing_key.verifying_key().to_bytes()
+    }
+
+    /// Sign `msg` (arbitrary wire bytes).
+    pub fn sign(&self, msg: &[u8]) -> Signature {
+        self.signing_key.sign(msg)
+    }
+
+    /// Verify `msg` against `pubkey` (strict: rejects malleable signatures).
+    pub fn verify(pubkey: &[u8; 32], msg: &[u8], signature: &[u8; 64]) -> bool {
+        let Ok(key) = VerifyingKey::from_bytes(pubkey) else {
+            return false;
+        };
+        let Ok(signature) = Signature::from_slice(signature) else {
+            return false;
+        };
+        key.verify_strict(msg, &signature).is_ok()
+    }
+}
+
+/// [`NodeId`] bound to an Ed25519 public key: the first 16 bytes of
+/// `BLAKE3(pubkey)`.
+pub fn node_id_for_pubkey(pubkey: &[u8; 32]) -> NodeId {
+    let hash = blake3::hash(pubkey);
+    let mut out = [0u8; 16];
+    out.copy_from_slice(&hash.as_bytes()[..16]);
+    NodeId::from_bytes(out)
 }
 
 /// Write `contents` to `path` owner-only: created `0600` on Unix, default
@@ -99,6 +160,17 @@ pub fn parse_hex16(s: &str) -> Option<[u8; 16]> {
     Some(out)
 }
 
+/// Decode exactly 32 bytes of hex (an Ed25519 seed or public key).
+pub fn parse_hex32(s: &str) -> Option<[u8; 32]> {
+    let bytes = parse_hex(s)?;
+    if bytes.len() != 32 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&bytes);
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,10 +195,15 @@ mod tests {
     fn identity_persists_across_loads() {
         let dir = std::env::temp_dir().join(format!("mosaic-id-{}-persist", std::process::id()));
         let path = dir.join("node.id");
-        let first = load_or_create(&path).expect("create identity");
+        let first = Identity::load_or_create(&path).expect("create identity");
         assert!(path.is_file(), "identity file must be written");
-        let second = load_or_create(&path).expect("reload identity");
-        assert_eq!(first, second, "identity must be stable across restarts");
+        let second = Identity::load_or_create(&path).expect("reload identity");
+        assert_eq!(
+            first.node_id(),
+            second.node_id(),
+            "identity must be stable across restarts"
+        );
+        assert_eq!(first.pubkey(), second.pubkey());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -136,11 +213,60 @@ mod tests {
         let path = dir.join("node.id");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(&path, "not-hex").unwrap();
-        let id = load_or_create(&path).expect("regenerate identity");
-        assert_ne!(id, tpt_mosaic_core::NodeId::NIL);
+        let identity = Identity::load_or_create(&path).expect("regenerate identity");
+        assert_ne!(identity.node_id(), tpt_mosaic_core::NodeId::NIL);
         // The file now holds the fresh identity in hex.
-        assert_eq!(load_or_create(&path).unwrap(), id);
+        assert_eq!(
+            Identity::load_or_create(&path).unwrap().node_id(),
+            identity.node_id()
+        );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn legacy_identity_file_is_replaced_by_a_keypair() {
+        let dir = std::env::temp_dir().join(format!("mosaic-id-{}-legacy", std::process::id()));
+        let path = dir.join("node.id");
+        std::fs::create_dir_all(&dir).unwrap();
+        // A pre-Ed25519 16-byte identity file.
+        std::fs::write(&path, to_hex(&[7u8; 16])).unwrap();
+        let identity = Identity::load_or_create(&path).expect("regenerate over legacy file");
+        // The file now holds the 64-byte expanded key.
+        let stored = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(stored.trim().len(), 64);
+        assert_eq!(
+            Identity::load_or_create(&path).unwrap().node_id(),
+            identity.node_id()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn node_id_is_derived_from_the_public_key() {
+        let identity = Identity::generate();
+        assert_eq!(
+            identity.node_id(),
+            node_id_for_pubkey(&identity.pubkey()),
+            "NodeId must equal BLAKE3(pubkey)[..16]"
+        );
+        // Different keys → different ids.
+        assert_ne!(Identity::generate().node_id(), identity.node_id());
+    }
+
+    #[test]
+    fn signatures_verify_only_against_the_signing_key() {
+        let identity = Identity::generate();
+        let other = Identity::generate();
+        let msg = b"authenticated frame bytes";
+        let sig = identity.sign(msg).to_bytes();
+
+        assert!(Identity::verify(&identity.pubkey(), msg, &sig));
+        assert!(!Identity::verify(&other.pubkey(), msg, &sig));
+        // Any tampering with the message breaks the signature.
+        assert!(!Identity::verify(&identity.pubkey(), b"tampered", &sig));
+        // Garbage signatures and garbage keys are rejected, not panics.
+        assert!(!Identity::verify(&identity.pubkey(), msg, &[0u8; 64]));
+        assert!(!Identity::verify(&[0u8; 32], msg, &sig));
     }
 
     #[test]

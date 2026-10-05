@@ -171,6 +171,9 @@ mod tests {
             capabilities: tpt_mosaic_core::CapabilityFlags::CPU_VECTOR,
             timestamp_ms: 0,
             addr: Some(SocketAddr::from(([127, 0, 0, 1], port))),
+            nonce: 0,
+            pubkey: [0; 32],
+            signature: [0; 64],
         })
     }
 
@@ -252,6 +255,8 @@ mod tests {
             node_id: tpt_mosaic_core::NodeId::NIL,
             hash: [0; 32],
             produced_at_ms: 0,
+            pubkey: [0; 32],
+            signature: [0; 64],
         });
         let reply = TcpMesh::exchange(addr, &result_hash, Duration::from_secs(2));
         assert_eq!(reply, None);

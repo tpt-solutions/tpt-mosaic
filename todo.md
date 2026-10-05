@@ -137,9 +137,9 @@ in-tree; unchecked items are pending. Stubbed integration points are marked.
 - [x] Pay workers (every winning voter credited, not only the coordinator); reputation wired into the assemblers (tie-break) + `finish_task` (winners up, Byzantine suspects down); ledger + reputation persist via `[economy] state_file` / `reputation_file`
 - [x] Poisoned-mutex `expect`s replaced with poison-tolerant locking (node + discovery); saturating ledger arithmetic; CSPRNG ids (`getrandom`); `0600` identity file on Unix
 - [x] Compiler cache: BLAKE3 integrity digest per entry (corrupt/oversize entries discarded), backend feature set in the fingerprint, process-unique tmp names, 64 MiB size cap
+- [x] Node identity: Ed25519 keypairs, `NodeId = BLAKE3(pubkey)[..16]`, signed beacons/assignments/results (wire v3), beacon nonce + timestamp replay rejection, persisted seed file (`0600`); explicit `node.id` keeps a legacy unsigned mode
 
-Open:
-- [ ] Node identity: ed25519 keys, `NodeId = hash(pubkey)`, signed beacons/assignments/results, nonce + timestamp replay protection
+Phase 13 complete.
 
 ## Phase 14 — Adoption & usability
 

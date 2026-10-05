@@ -7,6 +7,13 @@ in the root [CHANGELOG.md](../../CHANGELOG.md).
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking:** `WIRE_VERSION` bumped to 3 - `HeartbeatBeacon`,
+  `TaskAssignment`, and `ResultHash` carry Ed25519 authentication fields
+  (`pubkey` + `signature`; the beacon also carries a replay `nonce`). v2
+  peers cannot interoperate with v3.
+
 ### Planned
 
 - Additional `CapabilityFlags` bits as new accelerator classes appear

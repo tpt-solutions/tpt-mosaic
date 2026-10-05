@@ -71,7 +71,7 @@ tasks over the control API and executes them locally as a 1-of-1 quorum.
 
 | Section | Purpose |
 |---|---|
-| `[node]` | Identity (`id`, `state_file`) and role (`kind` = `edge` / `anchor`) |
+| `[node]` | Identity and role (`kind` = `edge` / `anchor`). `state_file` persists the Ed25519 seed; the node id is `BLAKE3(pubkey)[..16]`. An explicit `id` disables signing/verification (legacy mode) |
 | `[compiler]` | On-disk JIT cache directory (`cache_dir`; empty disables caching) |
 | `[hardware]` | Advertised silicon: `gpu_vendor`, `npu_present`, `cpu_arch`, `memory_mb`, `battery_level`, `thermal_state` |
 | `[capabilities]` | Capability flags advertised in beacons: `cuda`, `metal`, `vulkan`, `npu`, `dsp`, `fpga`, `cpu_vector` |

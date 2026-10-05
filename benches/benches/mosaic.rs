@@ -26,6 +26,9 @@ fn sample_beacon() -> tpt_mosaic_proto::WireMessage {
         capabilities: CapabilityFlags::CUDA | CapabilityFlags::CPU_VECTOR,
         timestamp_ms: 1_700_000_000_000,
         addr: Some(std::net::SocketAddr::from(([127, 0, 0, 1], 7745))),
+        nonce: 0x0102_0304_0506_0708,
+        pubkey: [0x11; 32],
+        signature: [0x22; 64],
     })
 }
 
@@ -49,6 +52,8 @@ fn bench_codec(c: &mut Criterion) {
             payload: vec![0xAB; 64 * 1024],
             deadline_ms: 0,
             coordinator: std::net::SocketAddr::from(([127, 0, 0, 1], 7331)),
+            pubkey: [0x33; 32],
+            signature: [0x44; 64],
         });
     let assignment_frame = tpt_mosaic_proto::encode(&assignment);
     group.throughput(criterion::Throughput::Bytes(assignment_frame.len() as u64));

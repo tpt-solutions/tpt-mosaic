@@ -33,10 +33,13 @@ mod traits;
 
 /// Wire protocol version. Increment on any breaking schema change.
 ///
+/// v3: `HeartbeatBeacon`, `TaskAssignment`, and `ResultHash` carry Ed25519
+/// authentication fields (`pubkey` + `signature`; the beacon also carries a
+/// replay `nonce`). v2 had no authentication fields.
 /// v2: `HeartbeatBeacon` carries the sender's mesh address and
 /// `TaskAssignment` carries the coordinator's mesh address (family-tagged).
 /// v1 had no address fields.
-pub const WIRE_VERSION: u16 = 2;
+pub const WIRE_VERSION: u16 = 3;
 
 /// Magic bytes at the start of every tpt-mosaic frame: ASCII `"MOSA"`.
 pub const WIRE_MAGIC: u32 = 0x4D4F_5341;
